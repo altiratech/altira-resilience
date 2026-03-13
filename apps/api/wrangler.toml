@@ -1,0 +1,33 @@
+name = "altira-resilience-api"
+main = "src/index.ts"
+compatibility_date = "2026-03-07"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "altira-resilience-db"
+database_id = "00000000-0000-4000-8000-000000000001"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "SOURCE_DOCUMENTS_BUCKET"
+bucket_name = "altira-resilience-source-documents"
+preview_bucket_name = "altira-resilience-source-documents-preview"
+
+[[queues.producers]]
+binding = "SOURCE_EXTRACTION_QUEUE"
+queue = "altira-resilience-source-extraction"
+
+[[queues.consumers]]
+queue = "altira-resilience-source-extraction"
+max_batch_size = 5
+max_batch_timeout = 10
+
+[ai]
+binding = "AI"
+
+[dev]
+port = 8788
+
+[vars]
+APP_NAME = "Altira Resilience"
+APP_STAGE = "scaffold"

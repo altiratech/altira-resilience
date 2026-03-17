@@ -50,15 +50,69 @@ Current state:
 - A first real roster / assignment model now exists for:
   - a persisted participant directory with name, role, team, email, manager, and status
   - roster-backed launch assignment from the admin UI
+  - team-based assignment from the launch UI so admins and scoped managers can assign an entire team in one action
   - participant-run identity snapshots so evidence stays stable even if the roster changes later
   - report and export outputs that now carry team/email context alongside the assigned participant
 - A bounded workspace-user / role model now exists for:
-  - persisted `workspace_users` with `admin`, `facilitator`, `manager`, and `participant` roles
+  - persisted `workspace_users` aligned to the suite role model: `user`, `manager`, `admin`
+  - a first product-specific capability flag layer underneath those roles, starting with `resilience_tabletop_facilitate`
   - role-filtered bootstrap payloads, navigation, and API access rules
-  - a participant-only `My Exercises` home surface tied to assigned runs
-  - facilitator control over tabletop status / phase / notes without broad admin write access
-  - preview-grade persona switching through `X-Resilience-User-Id` + local storage so role boundaries can be validated before external auth exists
+  - a user-only `My Exercises` home surface tied to assigned runs
+  - manager tabletop control only when the specific Resilience capability is present
+  - explicit manager team scope, with manager views and evidence filtered to scoped teams instead of defaulting to workspace-wide review
+  - real workspace-email sign-in with server-side session cookies mapped onto `workspace_users`
+  - a non-production debug header fallback (`X-Resilience-User-Id`) retained only for tests and local role simulation
+- A first real auth/session layer now exists for:
+  - `GET /api/v1/auth/session`
+  - `POST /api/v1/auth/sign-in`
+  - `POST /api/v1/auth/sign-out`
+  - cookie-backed session resolution before bootstrap and protected workflow access
+  - a sign-in screen that replaces the old in-shell persona switcher
+  - admin-managed workspace users and invite records that sit above roster assignment
+  - admin-issued invite magic links with short-lived hashed-token activation for pending workspace invites
+  - manual-copy send / resend flow for those invite links from `People`
+  - direct deactivate / reactivate controls for workspace users in `People`
+  - revoked invite reopen behavior when the invite email is still free and no other pending invite exists
+  - backend guardrails that prevent self-deactivation, self-demotion out of admin, and leaving the workspace with zero active admins
+- A first lightweight audit trail now exists for:
+  - access changes across workspace users and invites
+  - launch creation and launch-state updates
+  - participant assignment creation and exercise submission
+  - recent admin-visible activity in `Overview` and `People`
+  - persisted audit events through D1 migration `0016_audit_events.sql`
+- A first real evidence closeout workflow now exists for:
+  - admin-authored closeout notes and follow-up actions on each launch-backed evidence package
+  - explicit `closed` evidence state on top of the derived `in_review` / `ready` posture
+  - export packages that now carry operator closeout notes alongside the deterministic after-action summary
+  - admin-only final close / reopen control so scoped managers cannot close launch-wide evidence they only partially see
+- A matching pre-launch draft review workflow now exists for:
+  - reviewer notes on scenario drafts
+  - explicit `changes_requested` state before launch
+  - persisted reviewer identity and review timestamp on draft records
+  - overview and exercises surfaces that now show blocked drafts separately from ready-for-review drafts
+  - audit events for draft submission, approval, and change requests
 - the admin workflow now reads/writes real records across Home, Source Library, Organization Context, Scenario Studio, Launches, Reports, and Settings
+- the admin UX is now reorganized around the readiness operating model:
+  - `Overview`
+  - `Exercises`
+  - `Evidence`
+  - `People`
+  - `Materials`
+  - `Settings`
+- the first-impression/admin UX pass is now materially cleaner:
+  - sign-in now speaks in product/outcome language instead of auth-implementation language
+  - `Exercises` sub-navigation now reads as `Program`, `Scenario Studio`, `Launches`
+  - settings and materials surfaces no longer expose platform-stack details or raw object-storage jargon to first-time operators
+  - participant home copy is now more action-oriented and less internally framed
+- scaffold-stage bootstrap now filters validation and smoke-test source documents out of the admin preview payload so local product review is not polluted by ingestion-test artifacts
+- the default admin landing view now leads with program signals instead of scaffold narration:
+  - pending approvals
+  - upcoming exercises
+  - overdue assignments
+  - evidence ready for review/export
+  - coverage gaps by team
+- Scenario Studio is now nested inside `Exercises` instead of defining the whole product identity
+- reporting is now framed as `Evidence`, with stronger emphasis on after-action outputs, completion posture, and exportable proof
 - the app now includes bounded runtime surfaces inside the same web shell:
   - a participant exercise workspace for assigned individual runs
   - a facilitator tabletop console with launch-level phase control, status control, and facilitator notes
@@ -69,11 +123,16 @@ Current state:
   - web: `http://localhost:5184`
   - api: `http://localhost:8798`
 - local validation passed:
-  - `npm run typecheck`
-  - `npm run test`
-  - `npm run build`
+  - `npm run typecheck -w @resilience/api`
+  - `npm run test -w @resilience/api`
+  - `npm run typecheck -w @resilience/web`
+  - `./node_modules/.bin/tsc --noEmit -p packages/shared/tsconfig.json`
+  - `npm run build -w @resilience/web`
   - `npm run db:migrate:local -w @resilience/api`
-- no external auth, SSO, tenant-grade identity integration, or roster sync yet
+- current validation note:
+  - the direct API typecheck path now completes cleanly again in the repo validation loop
+  - current API test baseline is `46/46`
+- no shared suite auth provider, Google sign-in, enterprise SSO, provider-backed emailed invite delivery, or roster sync yet
 - real-file validation has now been run on:
   - a real text PDF
   - a real image-only PDF derived from a real PDF
@@ -108,6 +167,7 @@ Key inputs:
 - `Business Ideas/Altira-Resilience/Scenario-Studio-v1-PRD.md`
 - `Business Ideas/Altira-Resilience/Scenario-Studio-v1-Wireframe-Brief.md`
 - `docs/AI_DOCUMENT_BOUNDARY.md`
+- `docs/PRIVATE_PREVIEW_LAUNCH_CHECKLIST.md`
 
 ## Build Rule
 
@@ -118,9 +178,19 @@ Implementation work for this product should happen here:
 
 ## Immediate Next Step
 
-Move from the bounded preview-grade role model into enterprise identity:
-- add external auth / SSO on top of the new `workspace_users` model
-- tighten tenant-safe identity and access boundaries for admin, facilitator, manager, and participant users
-- preserve the roster snapshot rule so later directory edits do not rewrite evidence history
+Move from local product completeness into private-preview readiness:
+- keep the new draft-review and evidence-closeout controls as the governed operator loop
+- keep the current workspace-user administration and invite queue as the local bridge model until shared Altira auth exists
+- add provider-backed invite delivery and tighten the preview/demo workspace so outside testers can navigate without local context
+- keep the visible suite roles simple: `user`, `manager`, `admin`
+- later layer Google sign-in and enterprise SSO onto the same workspace membership model instead of replacing it
+- tighten tenant-safe identity and access boundaries without rewriting evidence history
+- keep the new membership-lifecycle guardrails simple and operator-owned while deciding whether manager scope should remain admin-managed only or gain a request/approval path
+- keep the new audit trail lightweight and operator-readable instead of widening into a full workflow engine too early
+- keep the new evidence closeout model launch-backed and admin-owned until real pilot workflows force per-team or delegated review semantics
+- treat provider-backed emailed invites as a later layer on top of the current staged invite + magic-link records rather than a separate identity system
+- keep the new manager team-scope model simple and operational, widening it only if real pilot workflows force more complexity
+- add the next pre-launch review layer by giving scenario drafts explicit reviewer notes / request-changes handling instead of only `draft -> ready_for_review -> approved`
 - preserve the `upload_ai` vs `queued_ai` provenance split while deeper workflow surfaces are added
 - keep legacy `.doc`, `.xls`, and `.ppt` explicitly unsupported in v1
+- use `docs/PRIVATE_PREVIEW_LAUNCH_CHECKLIST.md` as the go / no-go gate before opening `resilience.altiratech.com` as a real private-preview URL

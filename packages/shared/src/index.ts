@@ -23,6 +23,21 @@ export type AdminSummaryCard = {
   tone: SummaryTone;
 };
 
+export type OverviewQueueItem = {
+  id: string;
+  title: string;
+  note: string;
+  statusLabel: string;
+};
+
+export type OverviewCoverageGap = {
+  team: string;
+  activeMembers: number;
+  assignedMembers: number;
+  submittedMembers: number;
+  note: string;
+};
+
 export type DocumentParseStatus = 'uploaded' | 'parsed' | 'needs_review' | 'approved';
 export type SourceStorageStatus = 'metadata_only' | 'stored';
 export type SourceStorageBackend = 'inline' | 'r2';
@@ -128,7 +143,7 @@ export type ScenarioTemplate = {
 
 export type LaunchMode = 'individual' | 'tabletop';
 export type ScenarioDifficulty = 'low' | 'medium' | 'high';
-export type ScenarioApprovalStatus = 'draft' | 'ready_for_review' | 'approved';
+export type ScenarioApprovalStatus = 'draft' | 'ready_for_review' | 'changes_requested' | 'approved';
 export type TabletopPhase = 'briefing' | 'injects' | 'decision_review' | 'after_action';
 
 export type ScenarioDraft = {
@@ -140,6 +155,10 @@ export type ScenarioDraft = {
   difficulty: ScenarioDifficulty;
   learningObjectives: string;
   approvalStatus: ScenarioApprovalStatus;
+  reviewerNotes: string | null;
+  reviewedAt: string | null;
+  reviewedByUserId: string | null;
+  reviewedByName: string | null;
   scheduledStartAt: string | null;
   participantsLabel: string | null;
   createdAt: string;
@@ -148,8 +167,30 @@ export type ScenarioDraft = {
 
 export type LaunchStatus = 'draft' | 'scheduled' | 'in_progress' | 'completed';
 export type RosterMemberStatus = 'active' | 'inactive';
-export type WorkspaceUserRole = 'admin' | 'facilitator' | 'manager' | 'participant';
+export type WorkspaceUserRole = 'user' | 'manager' | 'admin';
 export type WorkspaceUserStatus = 'active' | 'inactive';
+export type WorkspaceUserCapability = 'resilience_tabletop_facilitate';
+export type WorkspaceInviteStatus = 'pending' | 'accepted' | 'revoked';
+export type AuditEventCategory = 'access' | 'operations';
+export type AuditEventAction =
+  | 'scenario_draft_submitted'
+  | 'scenario_draft_approved'
+  | 'scenario_draft_changes_requested'
+  | 'workspace_user_created'
+  | 'workspace_user_updated'
+  | 'workspace_user_deactivated'
+  | 'workspace_user_reactivated'
+  | 'manager_scope_updated'
+  | 'workspace_invite_created'
+  | 'workspace_invite_revoked'
+  | 'workspace_invite_reopened'
+  | 'workspace_invite_accepted'
+  | 'launch_created'
+  | 'launch_updated'
+  | 'participant_assignment_created'
+  | 'participant_run_submitted';
+export type AuditEventTargetType = 'workspace_user' | 'workspace_invite' | 'scenario_draft' | 'launch' | 'participant_run';
+export type AuditEventActorRole = WorkspaceUserRole | 'system';
 
 export type RosterMember = {
   id: string;
@@ -167,9 +208,73 @@ export type WorkspaceUser = {
   fullName: string;
   email: string;
   role: WorkspaceUserRole;
+  capabilities: WorkspaceUserCapability[];
+  scopeTeams: string[];
   rosterMemberId: string | null;
   status: WorkspaceUserStatus;
   updatedAt: string;
+};
+
+export type WorkspaceInvite = {
+  id: string;
+  email: string;
+  fullName: string;
+  role: WorkspaceUserRole;
+  capabilities: WorkspaceUserCapability[];
+  scopeTeams: string[];
+  rosterMemberId: string | null;
+  status: WorkspaceInviteStatus;
+  invitedByUserId: string | null;
+  acceptedWorkspaceUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  acceptedAt: string | null;
+  magicLinkSentAt: string | null;
+  magicLinkExpiresAt: string | null;
+};
+
+export type WorkspaceInviteMagicLinkResult = {
+  workspaceInvite: WorkspaceInvite;
+  magicLinkPath: string;
+  expiresAt: string;
+  deliveryMode: 'manual_copy';
+};
+
+export type PreviewAuthAccount = {
+  email: string;
+  fullName: string;
+  role: WorkspaceUserRole;
+};
+
+export type AuthSession = {
+  id: string;
+  workspaceUserId: string;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+  lastSeenAt: string;
+};
+
+export type AuditEvent = {
+  id: string;
+  category: AuditEventCategory;
+  action: AuditEventAction;
+  targetType: AuditEventTargetType;
+  targetId: string;
+  actorUserId: string | null;
+  actorName: string;
+  actorRole: AuditEventActorRole;
+  summary: string;
+  detail: string | null;
+  createdAt: string;
+};
+
+export type AuthSessionState = {
+  authenticated: boolean;
+  currentUser: WorkspaceUser | null;
+  session: AuthSession | null;
+  signInMode: 'workspace_email';
+  previewAccounts: PreviewAuthAccount[];
 };
 
 export type Launch = {
@@ -185,6 +290,11 @@ export type Launch = {
   learningObjectives: string;
   tabletopPhase: TabletopPhase | null;
   facilitatorNotes: string;
+  reportCloseoutNotes: string;
+  reportFollowUpText: string;
+  reportClosedAt: string | null;
+  reportClosedByUserId: string | null;
+  reportClosedByName: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -242,7 +352,7 @@ export type ParticipantRunDetail = ParticipantRun & {
   learningObjectives: string;
 };
 
-export type ReportStatus = 'in_review' | 'ready';
+export type ReportStatus = 'in_review' | 'ready' | 'closed';
 
 export type EvidenceStatus = 'pending' | 'ready';
 
@@ -286,6 +396,10 @@ export type ReportDetail = {
   scenarioBrief: string;
   highlights: string[];
   afterActionSummary: ReportAfterActionSummary;
+  closeoutNotes: string;
+  followUpActions: string[];
+  closedAt: string | null;
+  closedByName: string | null;
   evidenceItems: ReportEvidenceItem[];
   participantRuns: ParticipantRun[];
 };
@@ -308,6 +422,10 @@ export type ReportEvidencePackage = {
   scenarioBrief: string;
   highlights: string[];
   afterActionSummary: ReportAfterActionSummary;
+  closeoutNotes: string;
+  followUpActions: string[];
+  closedAt: string | null;
+  closedByName: string | null;
   evidenceItems: ReportEvidenceItem[];
   participantRuns: ParticipantRun[];
 };
@@ -320,6 +438,16 @@ export type ReportExportFile = {
   mimeType: string;
   content: string;
   generatedAt: string;
+};
+
+export type OverviewData = {
+  programHealth: AdminSummaryCard[];
+  pendingApprovals: OverviewQueueItem[];
+  upcomingExercises: LaunchSummary[];
+  overdueAssignments: ParticipantRun[];
+  evidenceReady: ReportSummary[];
+  recentAfterActions: ReportSummary[];
+  coverageGaps: OverviewCoverageGap[];
 };
 
 export type SourceDocumentInput = {
@@ -366,6 +494,10 @@ export type ScenarioDraftInput = {
   difficulty: ScenarioDifficulty;
   learningObjectives: string;
   approvalStatus: ScenarioApprovalStatus;
+  reviewerNotes?: string | null;
+  reviewedAt?: string | null;
+  reviewedByUserId?: string | null;
+  reviewedByName?: string | null;
   scheduledStartAt: string | null;
   participantsLabel: string | null;
 };
@@ -414,8 +546,11 @@ export type BootstrapPayload = {
   stage: string;
   currentUser: WorkspaceUser;
   availableUsers: WorkspaceUser[];
+  workspaceInvites: WorkspaceInvite[];
+  auditEvents: AuditEvent[];
   nav: AdminNavItem[];
   summaryCards: AdminSummaryCard[];
+  overview: OverviewData;
   sourceLibrary: DocumentSummary[];
   organizationContext: ContextBucket[];
   scenarioTemplates: ScenarioTemplate[];
@@ -436,3 +571,47 @@ export type RosterMemberInput = {
 };
 
 export type RosterMemberPatch = Partial<RosterMemberInput>;
+
+export type WorkspaceUserInput = {
+  fullName: string;
+  email: string;
+  role: WorkspaceUserRole;
+  capabilities: WorkspaceUserCapability[];
+  scopeTeams: string[];
+  rosterMemberId: string | null;
+  status: WorkspaceUserStatus;
+};
+
+export type WorkspaceUserPatch = Partial<WorkspaceUserInput>;
+
+export type WorkspaceInviteInput = {
+  email: string;
+  fullName: string;
+  role: WorkspaceUserRole;
+  capabilities: WorkspaceUserCapability[];
+  scopeTeams: string[];
+  rosterMemberId: string | null;
+};
+
+export type WorkspaceInvitePatch = {
+  status?: WorkspaceInviteStatus;
+};
+
+export type ParticipantRunTeamAssignmentInput = {
+  launchId: string;
+  team: string;
+  dueAt: string | null;
+};
+
+export type ParticipantRunTeamAssignmentResult = {
+  launchId: string;
+  team: string;
+  createdRuns: ParticipantRun[];
+  skippedExistingCount: number;
+};
+
+export type ReportReviewUpdateInput = {
+  closeoutNotes: string;
+  followUpText: string;
+  markClosed: boolean;
+};

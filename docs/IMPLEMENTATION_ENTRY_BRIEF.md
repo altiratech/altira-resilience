@@ -25,8 +25,8 @@ This brief exists so the repo can be opened and understood quickly at the start 
 
 ## What Is Not Fixed Yet
 
-- external auth / SSO approach
-- tenant-safe identity and access boundaries across admin, facilitator, manager, and participant surfaces
+- shared suite auth provider / Google / SSO approach
+- tenant-safe identity and access boundaries across admin/operator, manager-review, and user exercise surfaces
 - broader scoring / scenario logic beyond the first deterministic checkpoints
 
 These are the next implementation choices after the architecture lock.
@@ -59,15 +59,38 @@ The current implemented foundation is:
 22. queue follow-up now surfaces an honest environment/storage note when local preview cannot read stored bytes from R2
 23. a persisted roster directory now exists for participant assignment, with roster-backed launch assignment in the admin UI
 24. participant runs now snapshot roster identity fields (name, email, role, team) so later directory changes do not silently rewrite evidence records
-25. a bounded `workspace_users` model now exists with `admin`, `facilitator`, `manager`, and `participant` roles
-26. bootstrap, navigation, and API access now filter by the current workspace-user role instead of assuming one global admin operator
-27. participant users now land in a dedicated `My Exercises` surface and can only read/update runs tied to their `rosterMemberId`
-28. facilitator users can control tabletop launch status / phase / notes without gaining broader admin write access
-29. preview persona switching now exists through local storage + `X-Resilience-User-Id` so role boundaries can be tested before external auth exists
+25. a bounded `workspace_users` model now exists with suite-compatible roles: `user`, `manager`, and `admin`
+26. product-specific powers now sit under that simple role model as capability flags, starting with `resilience_tabletop_facilitate`
+27. bootstrap, navigation, and API access now filter by the current workspace user instead of assuming one global admin operator
+28. `user` members now land in a dedicated `My Exercises` surface and can only read/update runs tied to their `rosterMemberId`
+29. `manager` members can review launches and evidence, while tabletop launch status / phase / notes remain limited to admins or managers with the tabletop capability
+30. workspace-email sign-in now creates a real server session cookie and maps into the current `workspace_users` model
+31. a non-production debug header fallback (`X-Resilience-User-Id`) is still retained for tests and local role simulation, but it is no longer the main web auth path
+32. admins can now create and update workspace users directly from the `People` surface without dropping back to mock identity controls
+33. admins can now stage pending workspace invites, revoke unused invites, issue or resend short-lived magic links, and let invited people become real workspace users only when that invite link is consumed
+34. managers now operate with explicit team scope instead of broad default workspace review, and their launch, evidence, roster, and assignment views are filtered to those scoped teams
+35. launch operations now support team-based assignment, so admins and scoped managers can assign an entire team in one action instead of only adding people one by one
+36. the admin UX is now organized around the readiness operating model instead of the tool inventory:
+   - `Overview`
+   - `Exercises`
+   - `Evidence`
+   - `People`
+   - `Materials`
+   - `Settings`
+37. the new Overview surface now leads with program health, pending approvals, overdue assignments, upcoming exercises, evidence readiness, and coverage gaps
+38. Scenario Studio now lives inside `Exercises` as a guided creation stage, not as the product's primary identity
+39. reporting is now framed as `Evidence` so after-actions, exports, and proof of completion read like a first-class product pillar
+40. workspace access now supports direct membership-lifecycle actions: admins can deactivate/reactivate users, reopen revoked invites, and rely on backend guardrails that prevent removing the last active admin or deactivating/demoting the admin tied to the current session
+41. a first persisted audit-event layer now records access changes, launch changes, assignment creation, and participant submission, and surfaces recent admin-visible activity in `Overview` and `People`
+42. evidence packages now support admin-authored closeout notes, operator follow-up actions, and explicit `closed` state on top of the existing derived after-action and export flow
+43. the first-impression UX pass now removes most internal scaffold/platform language from sign-in, materials, and settings, and tightens `Exercises` sub-navigation to `Program`, `Scenario Studio`, and `Launches`
+44. scaffold-stage bootstrap now filters validation and smoke-test source documents out of the admin preview payload so local product review stays coherent
+45. scenario drafts now support reviewer notes, a real `changes_requested` path, persisted review metadata, and audit events for submission/approval/rework actions
+46. the program overview and exercises pipeline now show review-ready drafts separately from drafts blocked for changes
 
 Runtime split now fixed:
 - individual exercise runs remain participant-owned and deterministically scored
-- tabletop launch state remains facilitator-owned at the launch level
+- tabletop launch state remains operator-owned at the launch level, typically an admin or a manager with the tabletop capability
 
 Why:
 - it proves the product is becoming real
@@ -76,11 +99,17 @@ Why:
 
 ## Immediate Next Build Block
 
-1. add external auth / SSO on top of the now-stable `workspace_users` operator model
-2. keep the provider/versioning/provenance boundary in `docs/AI_DOCUMENT_BOUNDARY.md` as the rule for future ingestion work
-3. keep legacy `.doc`, `.xls`, and `.ppt` explicitly unsupported in v1 rather than widening ingestion scope
-4. keep extraction review-gated so uploaded materials still require operator approval before they change context
-5. continue moving from preview-grade identity into pilot-ready tenant and persona boundaries
+1. keep the new workspace-user admin, invite flow, and manager team-scope model as the bridge layer until shared Altira auth exists
+2. add provider-backed invite delivery and a cleaner tester-facing access flow on top of the existing magic-link bridge
+3. keep the new membership-lifecycle controls operator-owned and decide whether manager scope should stay admin-managed only or gain a request / approval flow
+4. keep the new audit trail lightweight and operator-readable rather than widening it into a full approval engine too early
+5. keep the provider/versioning/provenance boundary in `docs/AI_DOCUMENT_BOUNDARY.md` as the rule for future ingestion work
+6. keep legacy `.doc`, `.xls`, and `.ppt` explicitly unsupported in v1 rather than widening ingestion scope
+7. keep extraction review-gated so uploaded materials still require operator approval before they change context
+8. keep visible roles simple as `user`, `manager`, and `admin`, adding product-specific capability flags only when needed
+9. keep the current workspace-email sign-in for active users plus invite-based magic-link activation for pending invites as the bridge until shared Altira auth exists, then layer Google / SSO onto the same model
+10. preserve the new buyer-facing readiness-OS IA rather than drifting back toward implementation-shaped navigation
+11. keep the preview/demo workspace coherent so first-look product reviews are not polluted by validation artifacts, test fixtures, or internal build-state copy
 
 ## Canonical Inputs
 
@@ -89,3 +118,4 @@ Why:
 - `Business Ideas/Altira-Resilience/Scenario-Studio-v1-PRD.md`
 - `Business Ideas/Altira-Resilience/Scenario-Studio-v1-Wireframe-Brief.md`
 - `Business Ideas/Altira-Resilience/Scenario-Studio-v1-Clickable-Prototype-Brief.md`
+- `docs/PRIVATE_PREVIEW_LAUNCH_CHECKLIST.md`

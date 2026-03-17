@@ -1,4 +1,5 @@
 import type {
+  AuthSessionState,
   BootstrapPayload,
   ContextItem,
   ContextItemInput,
@@ -12,9 +13,12 @@ import type {
   ParticipantRunDetail,
   ParticipantRunInput,
   ParticipantRunPatch,
+  ParticipantRunTeamAssignmentInput,
+  ParticipantRunTeamAssignmentResult,
   ReportDetail,
   ReportExportFile,
   ReportExportFormat,
+  ReportReviewUpdateInput,
   RosterMember,
   RosterMemberInput,
   RosterMemberPatch,
@@ -26,27 +30,41 @@ import type {
   SourceDocumentPatch,
   SourceExtractionSuggestion,
   SuggestionStatus,
+  WorkspaceInvite,
+  WorkspaceInviteInput,
+  WorkspaceInviteMagicLinkResult,
+  WorkspaceInvitePatch,
+  WorkspaceUser,
+  WorkspaceUserInput,
+  WorkspaceUserPatch,
 } from '@resilience/shared';
-
-const CURRENT_USER_STORAGE_KEY = 'altira-resilience-current-user-id';
 
 export async function getBootstrap(): Promise<BootstrapPayload> {
   return requestJson<BootstrapPayload>('/api/v1/bootstrap');
 }
 
-export function getCurrentUserId(): string | null {
-  if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem(CURRENT_USER_STORAGE_KEY);
+export async function getAuthSessionState(): Promise<AuthSessionState> {
+  return requestJson<AuthSessionState>('/api/v1/auth/session');
 }
 
-export function setCurrentUserId(userId: string | null) {
-  if (typeof window === 'undefined') return;
-  if (!userId) {
-    window.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
-    return;
-  }
+export async function signInWithWorkspaceEmail(email: string): Promise<AuthSessionState> {
+  return requestJson<AuthSessionState>('/api/v1/auth/sign-in', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
 
-  window.localStorage.setItem(CURRENT_USER_STORAGE_KEY, userId);
+export async function consumeInviteMagicLink(token: string): Promise<AuthSessionState> {
+  return requestJson<AuthSessionState>('/api/v1/auth/magic-link/consume', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
+}
+
+export async function signOutCurrentSession(): Promise<AuthSessionState> {
+  return requestJson<AuthSessionState>('/api/v1/auth/sign-out', {
+    method: 'POST',
+  });
 }
 
 export async function getSourceDocument(documentId: string): Promise<SourceDocumentDetail> {
@@ -63,11 +81,10 @@ export async function createSourceDocument(input: SourceDocumentInput): Promise<
 }
 
 export async function uploadSourceDocument(formData: FormData): Promise<SourceDocumentDetail> {
-  const currentUserId = getCurrentUserId();
   const response = await fetch('/api/v1/source-documents/upload', {
     method: 'POST',
     body: formData,
-    headers: currentUserId ? { 'X-Resilience-User-Id': currentUserId } : undefined,
+    credentials: 'include',
   });
 
   if (!response.ok) {
@@ -185,6 +202,52 @@ export async function updateRosterMember(
   return payload.rosterMember;
 }
 
+export async function createWorkspaceUser(input: WorkspaceUserInput): Promise<WorkspaceUser> {
+  const payload = await requestJson<{ workspaceUser: WorkspaceUser }>('/api/v1/workspace-users', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return payload.workspaceUser;
+}
+
+export async function updateWorkspaceUser(
+  userId: string,
+  patch: WorkspaceUserPatch,
+): Promise<WorkspaceUser> {
+  const payload = await requestJson<{ workspaceUser: WorkspaceUser }>(`/api/v1/workspace-users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+  return payload.workspaceUser;
+}
+
+export async function createWorkspaceInvite(input: WorkspaceInviteInput): Promise<WorkspaceInvite> {
+  const payload = await requestJson<{ workspaceInvite: WorkspaceInvite }>('/api/v1/workspace-invites', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return payload.workspaceInvite;
+}
+
+export async function updateWorkspaceInvite(
+  inviteId: string,
+  patch: WorkspaceInvitePatch,
+): Promise<WorkspaceInvite> {
+  const payload = await requestJson<{ workspaceInvite: WorkspaceInvite }>(`/api/v1/workspace-invites/${inviteId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+  return payload.workspaceInvite;
+}
+
+export async function sendWorkspaceInviteMagicLink(
+  inviteId: string,
+): Promise<WorkspaceInviteMagicLinkResult> {
+  return requestJson<WorkspaceInviteMagicLinkResult>(`/api/v1/workspace-invites/${inviteId}/send`, {
+    method: 'POST',
+  });
+}
+
 export async function createLaunch(input: LaunchInput): Promise<Launch> {
   const payload = await requestJson<{ launch: Launch }>('/api/v1/launches', {
     method: 'POST',
@@ -214,6 +277,15 @@ export async function createParticipantRun(input: ParticipantRunInput): Promise<
   return payload.run;
 }
 
+export async function createParticipantRunsByTeam(
+  input: ParticipantRunTeamAssignmentInput,
+): Promise<ParticipantRunTeamAssignmentResult> {
+  return requestJson<ParticipantRunTeamAssignmentResult>('/api/v1/participant-runs/team-assignments', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
 export async function getParticipantRun(runId: string): Promise<ParticipantRunDetail> {
   const payload = await requestJson<{ run: ParticipantRunDetail }>(`/api/v1/participant-runs/${runId}`);
   return payload.run;
@@ -232,10 +304,20 @@ export async function getReportDetail(launchId: string): Promise<ReportDetail> {
   return payload.report;
 }
 
+export async function updateReportReview(
+  launchId: string,
+  input: ReportReviewUpdateInput,
+): Promise<ReportDetail> {
+  const payload = await requestJson<{ report: ReportDetail }>(`/api/v1/reports/${launchId}/review`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+  return payload.report;
+}
+
 export async function exportReport(launchId: string, format: ReportExportFormat): Promise<ReportExportFile> {
-  const currentUserId = getCurrentUserId();
   const response = await fetch(`/api/v1/reports/${launchId}/export?format=${format}`, {
-    headers: currentUserId ? { 'X-Resilience-User-Id': currentUserId } : undefined,
+    credentials: 'include',
   });
 
   if (!response.ok) {
@@ -252,13 +334,12 @@ export async function exportReport(launchId: string, format: ReportExportFormat)
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const currentUserId = getCurrentUserId();
   const response = await fetch(path, {
     headers: {
       'Content-Type': 'application/json',
-      ...(currentUserId ? { 'X-Resilience-User-Id': currentUserId } : {}),
       ...(init?.headers ?? {}),
     },
+    credentials: 'include',
     ...init,
   });
 
@@ -269,7 +350,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function buildRequestError(response: Response): Promise<Error> {
+async function buildRequestError(response: Response): Promise<RequestError> {
   let detail = 'Request failed.';
   try {
     const payload = (await response.json()) as { error?: string };
@@ -277,7 +358,7 @@ async function buildRequestError(response: Response): Promise<Error> {
   } catch {
     // Ignore body parse failures and keep the generic error.
   }
-  return new Error(detail);
+  return new RequestError(detail, response.status);
 }
 
 function parseFileName(contentDisposition: string | null): string | null {
@@ -288,4 +369,14 @@ function parseFileName(contentDisposition: string | null): string | null {
 
 function fallbackExportFileName(format: ReportExportFormat): string {
   return format === 'json' ? 'altira-resilience-evidence-package.json' : 'altira-resilience-after-action.md';
+}
+
+export class RequestError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'RequestError';
+    this.status = status;
+  }
 }

@@ -11,3 +11,6 @@ coverage
 *.sqlite
 *.db
 *.db-journal
+.playwright-browsers
+.playwright-cli
+output

@@ -1,13 +1,11 @@
 import type { AdminNavItem, ScenarioTemplate } from '@resilience/shared';
 
 export const adminNav: AdminNavItem[] = [
-  { id: 'home', label: 'Home' },
-  { id: 'source-library', label: 'Source Library' },
-  { id: 'org-context', label: 'Organization Context' },
-  { id: 'scenario-studio', label: 'Scenario Studio' },
-  { id: 'roster', label: 'Roster' },
-  { id: 'launches', label: 'Launches' },
-  { id: 'reports', label: 'Reports' },
+  { id: 'home', label: 'Overview' },
+  { id: 'launches', label: 'Exercises' },
+  { id: 'reports', label: 'Evidence' },
+  { id: 'roster', label: 'People' },
+  { id: 'source-library', label: 'Materials' },
   { id: 'settings', label: 'Settings' },
 ];
 

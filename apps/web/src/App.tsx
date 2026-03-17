@@ -4,6 +4,8 @@ import type {
   AdminNavId,
   AdminNavItem,
   AdminSummaryCard,
+  AuditEvent,
+  AuthSessionState,
   BootstrapPayload,
   ContextBucket,
   ContextItemInput,
@@ -17,6 +19,8 @@ import type {
   ParticipantRun,
   ParticipantRunDetail,
   ParticipantRunInput,
+  ParticipantRunTeamAssignmentInput,
+  PreviewAuthAccount,
   ReportDetail,
   ReportExportFormat,
   ReportSummary,
@@ -33,29 +37,44 @@ import type {
   SourceExtractionSuggestion,
   SuggestionStatus,
   TabletopPhase,
+  WorkspaceInvite,
+  WorkspaceInviteMagicLinkResult,
+  WorkspaceInviteInput,
   WorkspaceUser,
+  WorkspaceUserInput,
+  WorkspaceUserCapability,
 } from '@resilience/shared';
 import {
-  applySourceSuggestion,
-  createContextItem,
-  createLaunch,
-  createParticipantRun,
-  createRosterMember,
-  createScenarioDraft,
-  extractSourceDocument,
-  exportReport,
-  getCurrentUserId,
   getBootstrap,
+  getAuthSessionState,
   getLaunchDetail,
   getParticipantRun,
   getReportDetail,
   getSourceDocument,
+  consumeInviteMagicLink,
+  signInWithWorkspaceEmail,
+  signOutCurrentSession,
+  applySourceSuggestion,
+  createContextItem,
+  createLaunch,
+  createParticipantRun,
+  createParticipantRunsByTeam,
+  createRosterMember,
+  createWorkspaceInvite,
+  createWorkspaceUser,
+  createScenarioDraft,
+  extractSourceDocument,
+  exportReport,
   queueSourceDocumentExtraction,
-  setCurrentUserId,
+  RequestError,
+  updateReportReview,
   updateContextItem,
   updateLaunch,
   updateParticipantRun,
   updateRosterMember,
+  sendWorkspaceInviteMagicLink,
+  updateWorkspaceInvite,
+  updateWorkspaceUser,
   updateScenarioDraft,
   updateSourceDocument,
   updateSourceSuggestionStatus,
@@ -63,6 +82,9 @@ import {
 } from './api';
 
 type StudioStep = 'source-library' | 'org-context' | 'templates' | 'configuration';
+type ExercisesView = 'pipeline' | 'studio' | 'launch-queue';
+type MaterialsView = 'library' | 'context';
+type PeopleView = 'directory' | 'access';
 
 type ParticipantResponseForm = {
   firstAction: string;
@@ -70,6 +92,18 @@ type ParticipantResponseForm = {
   impactAssessment: string;
   notes: string;
   policyAcknowledged: boolean;
+};
+
+type SignInFormState = {
+  email: string;
+};
+
+type WorkspaceAccessForm = WorkspaceUserInput;
+type WorkspaceInviteForm = WorkspaceInviteInput;
+type TeamAssignmentForm = ParticipantRunTeamAssignmentInput;
+type ReportCloseoutForm = {
+  closeoutNotes: string;
+  followUpText: string;
 };
 
 type SourceUploadForm = {
@@ -82,31 +116,29 @@ type SourceUploadForm = {
 };
 
 const stepTitles: Record<StudioStep, string> = {
-  'source-library': 'Source Library',
-  'org-context': 'Organization Context',
   templates: 'Template Selection',
   configuration: 'Scenario Configuration',
+  'source-library': 'Source Library',
+  'org-context': 'Context Review',
 };
 
-const studioSteps: StudioStep[] = ['source-library', 'org-context', 'templates', 'configuration'];
+const studioSteps: StudioStep[] = ['templates', 'configuration'];
 
 const fallbackNav: AdminNavItem[] = [
-  { id: 'home', label: 'Home' },
-  { id: 'source-library', label: 'Source Library' },
-  { id: 'org-context', label: 'Organization Context' },
-  { id: 'scenario-studio', label: 'Scenario Studio' },
-  { id: 'roster', label: 'Roster' },
-  { id: 'launches', label: 'Launches' },
-  { id: 'reports', label: 'Reports' },
+  { id: 'home', label: 'Overview' },
+  { id: 'launches', label: 'Exercises' },
+  { id: 'reports', label: 'Evidence' },
+  { id: 'roster', label: 'People' },
+  { id: 'source-library', label: 'Materials' },
   { id: 'settings', label: 'Settings' },
 ];
 
 const fallbackSummaryCards: AdminSummaryCard[] = [
   {
-    id: 'approved-sources',
-    label: 'Approved source documents',
+    id: 'active-exercises',
+    label: 'Active exercises',
     value: '0',
-    note: 'API unavailable. Showing local scaffold fallback.',
+    note: 'API unavailable. Showing local preview fallback.',
     tone: 'attention',
   },
 ];
@@ -126,13 +158,26 @@ const fallbackLaunches: LaunchSummary[] = [];
 const fallbackReports: ReportSummary[] = [];
 const fallbackDrafts: ScenarioDraft[] = [];
 const fallbackRosterMembers: RosterMember[] = [];
+const fallbackWorkspaceInvites: WorkspaceInvite[] = [];
+const fallbackAuditEvents: AuditEvent[] = [];
 const fallbackParticipantAssignments: ParticipantRun[] = [];
+const fallbackOverview: BootstrapPayload['overview'] = {
+  programHealth: fallbackSummaryCards,
+  pendingApprovals: [],
+  upcomingExercises: [],
+  overdueAssignments: [],
+  evidenceReady: [],
+  recentAfterActions: [],
+  coverageGaps: [],
+};
 const fallbackAvailableUsers: WorkspaceUser[] = [
   {
     id: 'user_dana_admin',
     fullName: 'Dana Smith',
     email: 'dana.smith@altira-demo.local',
     role: 'admin',
+    capabilities: [],
+    scopeTeams: [],
     rosterMemberId: null,
     status: 'active',
     updatedAt: '2026-03-11T14:30:00.000Z',
@@ -142,44 +187,36 @@ const fallbackCurrentUser = fallbackAvailableUsers[0];
 
 const navCopy: Record<AdminNavId, { title: string; description: string }> = {
   home: {
-    title: 'Home',
-    description:
-      'Admin-first scaffold for turning approved plans, playbooks, and escalation rules into guided rehearsal.',
+    title: 'Overview',
+    description: 'See what needs attention, what is live, and what evidence is ready.',
   },
   'source-library': {
-    title: 'Source Library',
-    description:
-      'Upload firm materials, review extracted teams/vendors/escalation roles, and decide what becomes structured context.',
+    title: 'Materials',
+    description: 'Keep firm materials and reviewed context current.',
   },
   'org-context': {
-    title: 'Organization Context',
-    description:
-      'Reviewable teams, vendors, and escalation paths become structured exercise inputs before any scenario draft is launched.',
+    title: 'Context Review',
+    description: 'Confirm the teams, vendors, and escalation roles that shape exercises.',
   },
   'scenario-studio': {
     title: 'Scenario Studio',
-    description:
-      'Template-first authoring keeps v1 bounded, serious, and reviewable instead of drifting into open-ended generation.',
+    description: 'Build structured exercises from reviewed materials and approved context.',
   },
   roster: {
-    title: 'Roster',
-    description:
-      'Keep a real participant directory with names, roles, teams, and reporting lines so launches can assign against a controlled roster instead of free text.',
+    title: 'People',
+    description: 'Manage participants, managers, and workspace access.',
   },
   launches: {
-    title: 'Launches',
-    description:
-      'Launches are now explicit operational records with assigned participants, run status, and a real exercise surface.',
+    title: 'Exercises',
+    description: 'Create, review, launch, and monitor exercises.',
   },
   reports: {
-    title: 'Reports',
-    description:
-      'Readiness only matters if completion, deterministic checkpoints, and evidence can be reviewed after the exercise closes.',
+    title: 'Evidence',
+    description: 'Review after-actions and export evidence.',
   },
   settings: {
     title: 'Settings',
-    description:
-      'Core product controls should stay operator-owned: permissions, retention, model usage, and audit posture.',
+    description: 'Set the operating standards for how this workspace runs.',
   },
 };
 
@@ -187,8 +224,12 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [authState, setAuthState] = useState<AuthSessionState | null>(null);
   const [payload, setPayload] = useState<BootstrapPayload | null>(null);
   const [activeNav, setActiveNav] = useState<AdminNavId>('home');
+  const [activeExercisesView, setActiveExercisesView] = useState<ExercisesView>('pipeline');
+  const [activeMaterialsView, setActiveMaterialsView] = useState<MaterialsView>('library');
+  const [activePeopleView, setActivePeopleView] = useState<PeopleView>('directory');
   const [activeStudioStep, setActiveStudioStep] = useState<StudioStep>('templates');
   const [selectedTemplate, setSelectedTemplate] = useState<string>('cyber-incident-escalation');
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
@@ -197,12 +238,14 @@ function App() {
   const [selectedLaunchId, setSelectedLaunchId] = useState<string | null>(null);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [selectedRosterMemberId, setSelectedRosterMemberId] = useState<string | null>(null);
+  const [selectedWorkspaceUserId, setSelectedWorkspaceUserId] = useState<string | null>(null);
   const [activeLaunchDetail, setActiveLaunchDetail] = useState<LaunchDetail | null>(null);
   const [activeReportDetail, setActiveReportDetail] = useState<ReportDetail | null>(null);
   const [activeFacilitatorLaunchId, setActiveFacilitatorLaunchId] = useState<string | null>(null);
   const [activeParticipantRunId, setActiveParticipantRunId] = useState<string | null>(null);
   const [activeParticipantRun, setActiveParticipantRun] = useState<ParticipantRunDetail | null>(null);
   const [facilitatorNotesForm, setFacilitatorNotesForm] = useState('');
+  const [reportCloseoutForm, setReportCloseoutForm] = useState<ReportCloseoutForm>(makeDefaultReportCloseoutForm());
   const [sourceUploadForm, setSourceUploadForm] = useState<SourceUploadForm>({
     name: '',
     type: 'Continuity Plan',
@@ -219,7 +262,10 @@ function App() {
     required: true,
   });
   const [rosterForm, setRosterForm] = useState<RosterMemberInput>(makeDefaultRosterMemberInput());
+  const [workspaceUserForm, setWorkspaceUserForm] = useState<WorkspaceAccessForm>(makeDefaultWorkspaceUserInput());
+  const [workspaceInviteForm, setWorkspaceInviteForm] = useState<WorkspaceInviteForm>(makeDefaultWorkspaceInviteInput());
   const [draftForm, setDraftForm] = useState<ScenarioDraftInput>(makeDefaultDraftInput(fallbackTemplates[0]));
+  const [draftReviewNotes, setDraftReviewNotes] = useState('');
   const [launchForm, setLaunchForm] = useState<LaunchInput>({
     scenarioDraftId: '',
     startsAt: null,
@@ -234,6 +280,11 @@ function App() {
     participantTeam: null,
     dueAt: null,
   });
+  const [participantTeamAssignmentForm, setParticipantTeamAssignmentForm] = useState<TeamAssignmentForm>({
+    launchId: '',
+    team: '',
+    dueAt: null,
+  });
   const [participantResponseForm, setParticipantResponseForm] = useState<ParticipantResponseForm>({
     firstAction: '',
     escalationChoice: '',
@@ -241,24 +292,29 @@ function App() {
     notes: '',
     policyAcknowledged: false,
   });
+  const [signInForm, setSignInForm] = useState<SignInFormState>({ email: '' });
+  const [latestInviteMagicLink, setLatestInviteMagicLink] = useState<WorkspaceInviteMagicLinkResult | null>(null);
 
   const nav = payload?.nav ?? fallbackNav;
-  const summaryCards = payload?.summaryCards ?? fallbackSummaryCards;
   const documents = payload?.sourceLibrary ?? fallbackDocuments;
   const contextBuckets = payload?.organizationContext ?? fallbackContext;
   const templates = payload?.scenarioTemplates ?? fallbackTemplates;
   const scenarioDrafts = payload?.scenarioDrafts ?? fallbackDrafts;
   const rosterMembers = payload?.rosterMembers ?? fallbackRosterMembers;
+  const workspaceInvites = payload?.workspaceInvites ?? fallbackWorkspaceInvites;
+  const auditEvents = payload?.auditEvents ?? fallbackAuditEvents;
   const currentUser = payload?.currentUser ?? fallbackCurrentUser;
   const availableUsers = payload?.availableUsers ?? fallbackAvailableUsers;
   const participantAssignments = payload?.participantAssignments ?? fallbackParticipantAssignments;
   const launches = payload?.launches ?? fallbackLaunches;
   const reports = payload?.reports ?? fallbackReports;
+  const overview = payload?.overview ?? fallbackOverview;
+  const previewAccounts = authState?.previewAccounts ?? [];
+  const authenticated = authState?.authenticated ?? false;
   const approvedDrafts = scenarioDrafts.filter((draft) => draft.approvalStatus === 'approved');
-  const activeWorkflowStep = getWorkflowStep(activeNav, activeStudioStep);
   const selectedScenarioTemplate =
     templates.find((template) => template.id === selectedTemplate) ?? templates[0];
-  const participantWorkspace = currentUser.role === 'participant';
+  const participantWorkspace = currentUser.role === 'user';
   const participantView = Boolean(activeParticipantRun);
   const facilitatorView =
     Boolean(activeFacilitatorLaunchId) &&
@@ -269,39 +325,62 @@ function App() {
     ? {
         title: activeParticipantRun?.launchName ?? 'Participant Exercise',
         description:
-          'This participant surface is intentionally bounded: complete the required checkpoints, cite the policy path, and submit a traceable response.',
+          activeParticipantRun && canWriteParticipantRun(currentUser, activeParticipantRun)
+            ? 'Complete the assigned exercise, work from the controlling procedure, and submit a response that becomes part of the launch evidence.'
+            : 'Review the submitted or assigned run record without changing the participant evidence directly.',
       }
     : facilitatorView
       ? {
           title: activeLaunchDetail?.name ?? 'Facilitator Tabletop',
           description:
-            'Facilitator mode keeps launch control, phase management, roster review, and evidence-oriented note capture in one bounded tabletop console.',
+            'Facilitator mode keeps launch control, phase management, roster review, and after-action note capture in one tabletop control surface.',
         }
     : participantWorkspace
       ? {
           title: 'My Exercises',
           description:
-            'Participant access is intentionally narrow: open assigned runs, complete the required checkpoints, and submit a traceable response.',
+            'Open assigned exercises, work through the required decisions, and submit a traceable response tied to the firm’s procedure.',
         }
-    : activeNav === 'scenario-studio'
+    : activeNav === 'launches'
+      ? activeExercisesView === 'studio'
+        ? {
+            title: 'Scenario Studio',
+            description:
+              activeStudioStep === 'configuration'
+                ? 'Turn reviewed materials into launch-ready exercise drafts without leaving the broader exercise workflow.'
+                : navCopy['scenario-studio'].description,
+          }
+        : activeExercisesView === 'launch-queue'
+          ? {
+              title: 'Launch Queue',
+              description:
+                'Run approved exercises as scheduled operational work with participant assignment, launch control, and facilitator access.',
+            }
+          : {
+              title: 'Exercises',
+              description:
+                'Move from draft review to launch and completion in one exercise pipeline built for recurring readiness programs.',
+            }
+    : activeNav === 'source-library'
       ? {
-          title: stepTitles[activeStudioStep],
+          title: 'Materials',
           description:
-            activeStudioStep === 'configuration'
-              ? 'Scenario drafts persist with approval state, while launches and participant runs now continue the workflow after approval.'
-              : navCopy['scenario-studio'].description,
+            activeMaterialsView === 'context'
+              ? navCopy['org-context'].description
+              : navCopy['source-library'].description,
+        }
+    : activeNav === 'roster'
+      ? {
+          title: 'People',
+          description:
+            activePeopleView === 'access'
+              ? 'Review the current workspace access model and role assignments that sit on top of the participant directory.'
+              : navCopy.roster.description,
         }
       : navCopy[activeNav];
 
   useEffect(() => {
-    const storedUserId = getCurrentUserId();
-    if (!storedUserId) {
-      setCurrentUserId(fallbackCurrentUser.id);
-    }
-  }, []);
-
-  useEffect(() => {
-    void reloadBootstrap();
+    void initializeApp();
   }, []);
 
   useEffect(() => {
@@ -347,6 +426,18 @@ function App() {
 
     setFacilitatorNotesForm(activeLaunchDetail.facilitatorNotes);
   }, [activeLaunchDetail]);
+
+  useEffect(() => {
+    if (!activeReportDetail) {
+      setReportCloseoutForm(makeDefaultReportCloseoutForm());
+      return;
+    }
+
+    setReportCloseoutForm({
+      closeoutNotes: activeReportDetail.closeoutNotes,
+      followUpText: activeReportDetail.followUpActions.join('\n'),
+    });
+  }, [activeReportDetail]);
 
   useEffect(() => {
     if (!documents.length) {
@@ -409,14 +500,62 @@ function App() {
   }, [rosterMembers, selectedRosterMemberId]);
 
   useEffect(() => {
+    if (!selectedWorkspaceUserId) return;
+    const selectedUser = availableUsers.find((user) => user.id === selectedWorkspaceUserId);
+    if (!selectedUser) {
+      setSelectedWorkspaceUserId(null);
+      setWorkspaceUserForm(makeDefaultWorkspaceUserInput());
+      return;
+    }
+
+    setWorkspaceUserForm(makeWorkspaceUserForm(selectedUser));
+  }, [availableUsers, selectedWorkspaceUserId]);
+
+  useEffect(() => {
     if (!nav.some((item) => item.id === activeNav)) {
       setActiveNav(nav[0]?.id ?? 'home');
     }
   }, [activeNav, nav]);
 
-  async function reloadBootstrap() {
+  async function initializeApp() {
     setError(null);
     setLoading(true);
+    try {
+      const magicLinkToken = readMagicLinkTokenFromUrl();
+      if (magicLinkToken) {
+        const session = await consumeInviteMagicLink(magicLinkToken);
+        clearMagicLinkTokenFromUrl();
+        setAuthState(session);
+        setSignInForm({ email: session.currentUser?.email ?? '' });
+        await reloadBootstrap({ preserveErrorState: true });
+        return;
+      }
+
+      const session = await getAuthSessionState();
+      setAuthState(session);
+
+      if (!session.authenticated) {
+        setPayload(null);
+        return;
+      }
+
+      await reloadBootstrap({ preserveErrorState: true });
+    } catch (loadError) {
+      if (readMagicLinkTokenFromUrl()) {
+        clearMagicLinkTokenFromUrl();
+      }
+      setError(loadError instanceof Error ? loadError.message : 'Unable to load Altira Resilience data.');
+      setPayload(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function reloadBootstrap(options?: { preserveErrorState?: boolean }) {
+    if (!options?.preserveErrorState) {
+      setError(null);
+    }
+
     try {
       const data = await getBootstrap();
       setPayload(data);
@@ -427,26 +566,58 @@ function App() {
         setContextForm((current) => ({ ...current, bucketId: data.organizationContext[0].id }));
       }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Unable to load Altira Resilience data.');
-      setPayload({
-        appName: 'Altira Resilience',
-        stage: 'offline-fallback',
-        currentUser: fallbackCurrentUser,
-        availableUsers: fallbackAvailableUsers,
-        nav: fallbackNav,
-        summaryCards: fallbackSummaryCards,
-        sourceLibrary: fallbackDocuments,
-        organizationContext: fallbackContext,
-        scenarioTemplates: fallbackTemplates,
-        scenarioDrafts: fallbackDrafts,
-        rosterMembers: fallbackRosterMembers,
-        participantAssignments: fallbackParticipantAssignments,
-        launches: fallbackLaunches,
-        reports: fallbackReports,
-      });
-    } finally {
-      setLoading(false);
+      if (loadError instanceof RequestError && loadError.status === 401) {
+        const session = await getAuthSessionState().catch(() => null);
+        setAuthState(
+          session ?? {
+            authenticated: false,
+            currentUser: null,
+            session: null,
+            signInMode: 'workspace_email',
+            previewAccounts: [],
+          },
+        );
+        setPayload(null);
+        return;
+      }
+
+      throw loadError;
     }
+  }
+
+  function handleNavChange(nextNav: AdminNavId) {
+    closeParticipantRun();
+    closeFacilitatorConsole();
+
+    if (nextNav === 'home') {
+      setActiveNav('home');
+      return;
+    }
+
+    if (nextNav === 'launches') {
+      setActiveNav('launches');
+      setActiveExercisesView('pipeline');
+      return;
+    }
+
+    if (nextNav === 'reports') {
+      setActiveNav('reports');
+      return;
+    }
+
+    if (nextNav === 'roster') {
+      setActiveNav('roster');
+      setActivePeopleView('directory');
+      return;
+    }
+
+    if (nextNav === 'source-library') {
+      setActiveNav('source-library');
+      setActiveMaterialsView('library');
+      return;
+    }
+
+    setActiveNav('settings');
   }
 
   async function withBusyState(label: string, action: () => Promise<void>) {
@@ -461,9 +632,11 @@ function App() {
     }
   }
 
-  async function handleCurrentUserChange(userId: string) {
-    setCurrentUserId(userId);
+  function resetShellState() {
     setActiveNav('home');
+    setActiveExercisesView('pipeline');
+    setActiveMaterialsView('library');
+    setActivePeopleView('directory');
     closeParticipantRun();
     closeFacilitatorConsole();
     setSelectedSourceDocumentId(null);
@@ -472,7 +645,32 @@ function App() {
     setActiveLaunchDetail(null);
     setSelectedReportId(null);
     setActiveReportDetail(null);
-    await reloadBootstrap();
+    setSelectedWorkspaceUserId(null);
+    setWorkspaceUserForm(makeDefaultWorkspaceUserInput());
+    setWorkspaceInviteForm(makeDefaultWorkspaceInviteInput());
+    setDraftReviewNotes('');
+    setParticipantTeamAssignmentForm(makeDefaultTeamAssignmentInput());
+    setReportCloseoutForm(makeDefaultReportCloseoutForm());
+    setLatestInviteMagicLink(null);
+  }
+
+  async function handleSignIn(email: string) {
+    await withBusyState('Signing in', async () => {
+      const session = await signInWithWorkspaceEmail(email);
+      setAuthState(session);
+      setSignInForm({ email: session.currentUser?.email ?? email });
+      resetShellState();
+      await reloadBootstrap();
+    });
+  }
+
+  async function handleSignOut() {
+    await withBusyState('Signing out', async () => {
+      const session = await signOutCurrentSession();
+      setAuthState(session);
+      setPayload(null);
+      resetShellState();
+    });
   }
 
   async function refreshSelections(options?: {
@@ -504,7 +702,9 @@ function App() {
     setSelectedTemplate(template.id);
     setActiveDraftId(null);
     setDraftForm(makeDefaultDraftInput(template));
-    setActiveNav('scenario-studio');
+    setDraftReviewNotes('');
+    setActiveNav('launches');
+    setActiveExercisesView('studio');
     setActiveStudioStep('configuration');
   }
 
@@ -522,7 +722,9 @@ function App() {
       scheduledStartAt: draft.scheduledStartAt,
       participantsLabel: draft.participantsLabel,
     });
-    setActiveNav('scenario-studio');
+    setDraftReviewNotes(draft.reviewerNotes ?? '');
+    setActiveNav('launches');
+    setActiveExercisesView('studio');
     setActiveStudioStep('configuration');
   }
 
@@ -570,6 +772,7 @@ function App() {
       });
       setUploadResetKey((current) => current + 1);
       setActiveNav('source-library');
+      setActiveMaterialsView('library');
       await refreshSelections({
         sourceDocumentId: document.id,
         launchId: selectedLaunchId,
@@ -673,6 +876,7 @@ function App() {
     setSelectedRosterMemberId(member?.id ?? null);
     setRosterForm(member ? mapRosterMemberToInput(member) : makeDefaultRosterMemberInput());
     setActiveNav('roster');
+    setActivePeopleView('directory');
   }
 
   async function handleSaveRosterMember(event: FormEvent<HTMLFormElement>) {
@@ -700,6 +904,7 @@ function App() {
         participantRunId: activeParticipantRunId,
       });
       setActiveNav('roster');
+      setActivePeopleView('directory');
     });
   }
 
@@ -708,13 +913,149 @@ function App() {
     setRosterForm(makeDefaultRosterMemberInput());
   }
 
+  function loadWorkspaceUser(user: WorkspaceUser | null) {
+    setSelectedWorkspaceUserId(user?.id ?? null);
+    setWorkspaceUserForm(user ? makeWorkspaceUserForm(user) : makeDefaultWorkspaceUserInput());
+    setActiveNav('roster');
+    setActivePeopleView('access');
+  }
+
+  async function handleSaveWorkspaceUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const payloadToSave: WorkspaceUserInput = {
+      ...workspaceUserForm,
+      fullName: workspaceUserForm.fullName.trim(),
+      email: workspaceUserForm.email.trim().toLowerCase(),
+      scopeTeams: workspaceUserForm.role === 'manager' ? workspaceUserForm.scopeTeams : [],
+      rosterMemberId: workspaceUserForm.rosterMemberId || null,
+      capabilities: workspaceUserForm.capabilities,
+    };
+
+    await withBusyState(selectedWorkspaceUserId ? 'Updating workspace user' : 'Creating workspace user', async () => {
+      const workspaceUser = selectedWorkspaceUserId
+        ? await updateWorkspaceUser(selectedWorkspaceUserId, payloadToSave)
+        : await createWorkspaceUser(payloadToSave);
+
+      setSelectedWorkspaceUserId(workspaceUser.id);
+      setWorkspaceUserForm(makeWorkspaceUserForm(workspaceUser));
+      await refreshSelections({
+        sourceDocumentId: selectedSourceDocumentId,
+        launchId: selectedLaunchId,
+        reportId: selectedReportId,
+        participantRunId: activeParticipantRunId,
+      });
+      setActiveNav('roster');
+      setActivePeopleView('access');
+    });
+  }
+
+  async function handleSetWorkspaceUserStatus(user: WorkspaceUser, status: WorkspaceUser['status']) {
+    const statusLabel = status === 'active' ? 'Reactivating workspace user' : 'Deactivating workspace user';
+    await withBusyState(statusLabel, async () => {
+      const workspaceUser = await updateWorkspaceUser(user.id, { status });
+      if (selectedWorkspaceUserId === user.id) {
+        setWorkspaceUserForm(makeWorkspaceUserForm(workspaceUser));
+      }
+      await refreshSelections({
+        sourceDocumentId: selectedSourceDocumentId,
+        launchId: selectedLaunchId,
+        reportId: selectedReportId,
+        participantRunId: activeParticipantRunId,
+      });
+      setActiveNav('roster');
+      setActivePeopleView('access');
+    });
+  }
+
+  function resetWorkspaceUserForm() {
+    setSelectedWorkspaceUserId(null);
+    setWorkspaceUserForm(makeDefaultWorkspaceUserInput());
+  }
+
+  async function handleCreateWorkspaceInvite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const payloadToSave: WorkspaceInviteInput = {
+      ...workspaceInviteForm,
+      fullName: workspaceInviteForm.fullName.trim(),
+      email: workspaceInviteForm.email.trim().toLowerCase(),
+      scopeTeams: workspaceInviteForm.role === 'manager' ? workspaceInviteForm.scopeTeams : [],
+      rosterMemberId: workspaceInviteForm.rosterMemberId || null,
+      capabilities: workspaceInviteForm.capabilities,
+    };
+
+    await withBusyState('Creating invite', async () => {
+      await createWorkspaceInvite(payloadToSave);
+      setWorkspaceInviteForm(makeDefaultWorkspaceInviteInput());
+      await refreshSelections({
+        sourceDocumentId: selectedSourceDocumentId,
+        launchId: selectedLaunchId,
+        reportId: selectedReportId,
+        participantRunId: activeParticipantRunId,
+      });
+      setActiveNav('roster');
+      setActivePeopleView('access');
+    });
+  }
+
+  async function handleRevokeWorkspaceInvite(inviteId: string) {
+    await withBusyState('Revoking invite', async () => {
+      await updateWorkspaceInvite(inviteId, { status: 'revoked' });
+      await refreshSelections({
+        sourceDocumentId: selectedSourceDocumentId,
+        launchId: selectedLaunchId,
+        reportId: selectedReportId,
+        participantRunId: activeParticipantRunId,
+      });
+      setActiveNav('roster');
+      setActivePeopleView('access');
+    });
+  }
+
+  async function handleReopenWorkspaceInvite(inviteId: string) {
+    await withBusyState('Reopening invite', async () => {
+      await updateWorkspaceInvite(inviteId, { status: 'pending' });
+      await refreshSelections({
+        sourceDocumentId: selectedSourceDocumentId,
+        launchId: selectedLaunchId,
+        reportId: selectedReportId,
+        participantRunId: activeParticipantRunId,
+      });
+      setActiveNav('roster');
+      setActivePeopleView('access');
+    });
+  }
+
+  async function handleSendWorkspaceInviteMagicLink(inviteId: string) {
+    await withBusyState('Issuing magic link', async () => {
+      const result = await sendWorkspaceInviteMagicLink(inviteId);
+      setLatestInviteMagicLink(result);
+      await refreshSelections({
+        sourceDocumentId: selectedSourceDocumentId,
+        launchId: selectedLaunchId,
+        reportId: selectedReportId,
+        participantRunId: activeParticipantRunId,
+      });
+      setActiveNav('roster');
+      setActivePeopleView('access');
+    });
+  }
+
   async function handleDraftSave(nextStatus?: ScenarioApprovalStatus) {
+    const reviewerNotes = draftReviewNotes.trim();
+    const statusToSave = nextStatus ?? draftForm.approvalStatus;
+
+    if (statusToSave === 'changes_requested' && !reviewerNotes) {
+      setError('Add reviewer notes before requesting changes on a draft.');
+      return;
+    }
+
     const payloadToSave: ScenarioDraftInput = {
       ...draftForm,
       templateId: selectedScenarioTemplate.id,
       audience: draftForm.audience.trim() || selectedScenarioTemplate.primaryAudience,
       title: draftForm.title.trim() || defaultTitleForTemplate(selectedScenarioTemplate),
-      approvalStatus: nextStatus ?? draftForm.approvalStatus,
+      approvalStatus: statusToSave,
+      reviewerNotes: reviewerNotes ? reviewerNotes : null,
     };
 
     await withBusyState('Saving scenario draft', async () => {
@@ -735,6 +1076,7 @@ function App() {
         scheduledStartAt: draft.scheduledStartAt,
         participantsLabel: draft.participantsLabel,
       });
+      setDraftReviewNotes(draft.reviewerNotes ?? '');
       await refreshSelections({
         sourceDocumentId: selectedSourceDocumentId,
         launchId: selectedLaunchId,
@@ -766,7 +1108,13 @@ function App() {
         participantTeam: null,
         dueAt: launch.startsAt,
       });
+      setParticipantTeamAssignmentForm({
+        launchId: launch.id,
+        team: '',
+        dueAt: launch.startsAt,
+      });
       setActiveNav('launches');
+      setActiveExercisesView('launch-queue');
       await refreshSelections({
         sourceDocumentId: selectedSourceDocumentId,
         launchId: launch.id,
@@ -793,6 +1141,11 @@ function App() {
         participantTeam: current.launchId === launchId ? current.participantTeam : null,
         dueAt: current.launchId === launchId ? current.dueAt : launch.startsAt,
       }));
+      setParticipantTeamAssignmentForm((current) => ({
+        launchId,
+        team: current.launchId === launchId ? current.team : '',
+        dueAt: current.launchId === launchId ? current.dueAt : launch.startsAt,
+      }));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load launch detail.');
     } finally {
@@ -807,6 +1160,7 @@ function App() {
     setActiveParticipantRun(null);
     setActiveFacilitatorLaunchId(launchId);
     setActiveNav('launches');
+    setActiveExercisesView('launch-queue');
   }
 
   function closeFacilitatorConsole() {
@@ -852,6 +1206,24 @@ function App() {
     });
   }
 
+  async function handleUpdateReportCloseout(launchId: string, markClosed: boolean) {
+    const label = markClosed ? 'Closing evidence package' : 'Saving closeout notes';
+
+    await withBusyState(label, async () => {
+      await updateReportReview(launchId, {
+        closeoutNotes: reportCloseoutForm.closeoutNotes,
+        followUpText: reportCloseoutForm.followUpText,
+        markClosed,
+      });
+      await refreshSelections({
+        sourceDocumentId: selectedSourceDocumentId,
+        launchId: selectedLaunchId,
+        reportId: launchId,
+        participantRunId: activeParticipantRunId,
+      });
+    });
+  }
+
   async function handleCreateParticipantRun(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await withBusyState('Assigning participant', async () => {
@@ -876,6 +1248,26 @@ function App() {
     });
   }
 
+  async function handleAssignTeamToLaunch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await withBusyState('Assigning team', async () => {
+      await createParticipantRunsByTeam(participantTeamAssignmentForm);
+      setParticipantTeamAssignmentForm((current) => ({
+        ...current,
+        team: '',
+      }));
+      await refreshSelections({
+        sourceDocumentId: selectedSourceDocumentId,
+        launchId: participantTeamAssignmentForm.launchId,
+        reportId: participantTeamAssignmentForm.launchId,
+        participantRunId: activeParticipantRunId ?? undefined,
+      });
+      if (participantTeamAssignmentForm.launchId === selectedLaunchId) {
+        await handleSelectLaunch(participantTeamAssignmentForm.launchId, true);
+      }
+    });
+  }
+
   async function openParticipantRun(runId: string, silent = false) {
     if (!silent) {
       setBusyLabel('Loading participant run');
@@ -894,6 +1286,7 @@ function App() {
         policyAcknowledged: run.policyAcknowledged,
       });
       setActiveNav('launches');
+      setActiveExercisesView('launch-queue');
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load participant run.');
     } finally {
@@ -932,6 +1325,53 @@ function App() {
     });
   }
 
+  if (loading) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-panel">
+          <div className="eyebrow">Altira</div>
+          <h1>Resilience</h1>
+          <p>Loading workspace session and readiness console.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authenticated) {
+    return (
+      <SignInPanel
+        error={error}
+        busyLabel={busyLabel}
+        email={signInForm.email}
+        previewAccounts={previewAccounts}
+        onEmailChange={(email) => setSignInForm({ email })}
+        onSubmit={() => void handleSignIn(signInForm.email)}
+        onUsePreviewAccount={(email) => void handleSignIn(email)}
+      />
+    );
+  }
+
+  if (!payload) {
+    return (
+      <div className="auth-shell">
+        <section className="auth-panel auth-panel-primary">
+          <div className="eyebrow">Altira</div>
+          <h1>Resilience</h1>
+          <p>We found your session, but the workspace console did not finish loading.</p>
+          {error ? <div className="notice notice-error">{error}</div> : null}
+          <div className="button-row">
+            <button type="button" className="button-primary" onClick={() => void initializeApp()}>
+              Retry load
+            </button>
+            <button type="button" className="button-secondary" onClick={() => void handleSignOut()}>
+              Sign out
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className={participantWorkspace ? 'shell shell-participant' : 'shell'}>
       {!participantWorkspace ? (
@@ -939,7 +1379,7 @@ function App() {
           <div className="brand">
             <div className="eyebrow">Altira</div>
             <h1>Resilience</h1>
-            <p>Role-aware operator scaffold for the first runnable workflow slice.</p>
+            <p>Operational console for readiness programs, exercises, and evidence.</p>
           </div>
           <nav className="nav">
             {nav.map((item) => (
@@ -947,11 +1387,7 @@ function App() {
                 key={item.id}
                 type="button"
                 className={item.id === activeNav && !participantView && !facilitatorView ? 'nav-item active' : 'nav-item'}
-                onClick={() => {
-                  closeParticipantRun();
-                  closeFacilitatorConsole();
-                  setActiveNav(item.id);
-                }}
+                onClick={() => handleNavChange(item.id)}
               >
                 {item.label}
               </button>
@@ -965,46 +1401,30 @@ function App() {
           <div>
             <div className="eyebrow">
               {participantView
-                ? 'Participant Mode'
+                ? 'Assigned Exercise'
                 : facilitatorView
-                  ? 'Facilitator Mode'
+                  ? 'Facilitator Control'
                   : participantWorkspace
-                    ? 'Assigned Exercise Access'
-                    : 'Active Scaffold'}
+                    ? 'Readiness Work'
+                    : activeNav === 'home'
+                      ? 'Readiness Program'
+                      : headerCopy.title}
             </div>
             <h2>{headerCopy.title}</h2>
             <p>{headerCopy.description}</p>
           </div>
           <div className="meta">
-            <label className="persona-select">
-              <span className="summary-label">Preview user</span>
-              <select value={currentUser.id} onChange={(event) => void handleCurrentUserChange(event.target.value)}>
-                {availableUsers.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.fullName} · {user.role}
-                  </option>
-                ))}
-              </select>
-            </label>
             <span className="chip">{currentUser.fullName}</span>
-            <span className="chip muted">{currentUser.role}</span>
-            <span className="chip">{payload?.appName ?? 'Altira Resilience'}</span>
-            <span className="chip muted">{loading ? 'loading' : payload?.stage ?? 'scaffold'}</span>
+            <span className="chip muted">{formatWorkspaceRoleLabel(currentUser.role)}</span>
+            <span className="chip muted">{currentUser.email}</span>
             {busyLabel ? <span className="chip muted">{busyLabel}</span> : null}
+            <button type="button" className="button-secondary" onClick={() => void handleSignOut()}>
+              Sign out
+            </button>
           </div>
         </header>
 
         {error ? <section className="notice notice-error">{error}</section> : null}
-
-        {!participantWorkspace ? (
-          <section className="workflow-note">
-            <strong>Bounded v1 rule:</strong> uploads must be reviewed before they influence structured context,
-            and scoring logic, approval, launch control, participant evidence, and report outputs stay
-            deterministic and operator-owned.
-          </section>
-        ) : null}
-
-        {!participantWorkspace && !participantView && !facilitatorView ? <SummaryStrip cards={summaryCards} /> : null}
 
         {!participantView && !facilitatorView && participantWorkspace ? (
           <ParticipantHomePanel
@@ -1015,26 +1435,11 @@ function App() {
           />
         ) : null}
 
-        {!participantWorkspace && !participantView && !facilitatorView && isWorkflowNav(activeNav) ? (
-          <section className="stepper">
-            {studioSteps.map((step, index) => (
-              <button
-                key={step}
-                type="button"
-                className={step === activeWorkflowStep ? 'step active' : 'step'}
-                onClick={() => jumpToWorkflowStep(step, setActiveNav, setActiveStudioStep)}
-              >
-                <span className="step-index">0{index + 1}</span>
-                <span>{stepTitles[step]}</span>
-              </button>
-            ))}
-          </section>
-        ) : null}
-
         {participantView && activeParticipantRun ? (
           <ParticipantExercisePanel
             run={activeParticipantRun}
             form={participantResponseForm}
+            readOnly={!canWriteParticipantRun(currentUser, activeParticipantRun)}
             onFormChange={setParticipantResponseForm}
             onBack={closeParticipantRun}
             onSaveProgress={() => void handleParticipantResponseSave(false)}
@@ -1064,11 +1469,44 @@ function App() {
         ) : null}
 
         {!participantWorkspace && !participantView && !facilitatorView && activeNav === 'home' ? (
-          <HomePanel launches={launches} reports={reports} scenarioDrafts={scenarioDrafts} />
+          <OverviewPanel
+            overview={overview}
+            auditEvents={auditEvents}
+            onCreateExercise={() => {
+              setActiveNav('launches');
+              setActiveExercisesView('studio');
+              setActiveStudioStep('templates');
+            }}
+            onReviewEvidence={() => setActiveNav('reports')}
+            onLaunchTabletop={() => {
+              const tabletopDraft =
+                approvedDrafts.find((draft) => draft.launchMode === 'tabletop') ?? approvedDrafts[0] ?? null;
+              if (tabletopDraft) {
+                setLaunchForm({
+                  scenarioDraftId: tabletopDraft.id,
+                  startsAt: tabletopDraft.scheduledStartAt,
+                  participantsLabel: tabletopDraft.participantsLabel,
+                });
+              }
+              setActiveNav('launches');
+              setActiveExercisesView('launch-queue');
+            }}
+            onOpenMaterials={() => {
+              setActiveNav('source-library');
+              setActiveMaterialsView('library');
+            }}
+            onOpenExercises={() => {
+              setActiveNav('launches');
+              setActiveExercisesView('pipeline');
+            }}
+            onOpenEvidence={() => setActiveNav('reports')}
+          />
         ) : null}
 
         {!participantWorkspace && !participantView && !facilitatorView && activeNav === 'source-library' ? (
-          <SourceLibraryPanel
+          <MaterialsHubPanel
+            activeView={activeMaterialsView}
+            onViewChange={setActiveMaterialsView}
             documents={documents}
             selectedDocumentId={selectedSourceDocumentId}
             onSelectDocument={(documentId) => void handleSelectSourceDocument(documentId)}
@@ -1082,44 +1520,19 @@ function App() {
             onQueueDocumentExtraction={(documentId) => void handleQueueDocumentExtraction(documentId)}
             onSuggestionDismiss={(suggestionId) => void handleSuggestionStatusChange(suggestionId, 'dismissed')}
             onSuggestionApply={(suggestionId) => void handleSuggestionApply(suggestionId)}
-          />
-        ) : null}
-
-        {!participantWorkspace && !participantView && !facilitatorView && activeNav === 'org-context' ? (
-          <OrgContextPanel
-            buckets={contextBuckets}
-            form={contextForm}
-            onFormChange={setContextForm}
-            onSubmit={handleCreateContextItem}
-            onItemPatch={handleContextItemPatch}
-          />
-        ) : null}
-
-        {!participantWorkspace && !participantView && !facilitatorView && activeNav === 'scenario-studio' && activeStudioStep === 'templates' ? (
-          <TemplatePanel
-            templates={templates}
-            selectedTemplate={selectedTemplate}
-            onSelect={setSelectedTemplate}
-            onContinue={() => startNewDraftFromTemplate(selectedScenarioTemplate)}
-          />
-        ) : null}
-
-        {!participantWorkspace && !participantView && !facilitatorView && activeNav === 'scenario-studio' && activeStudioStep === 'configuration' ? (
-          <ConfigurationPanel
-            selectedTemplate={selectedScenarioTemplate}
-            scenarioDrafts={scenarioDrafts}
-            activeDraftId={activeDraftId}
-            form={draftForm}
-            onFormChange={setDraftForm}
-            onBack={() => setActiveStudioStep('templates')}
-            onSaveDraft={handleDraftSave}
-            onLoadDraft={loadSavedDraft}
-            onStartNewDraft={() => startNewDraftFromTemplate(selectedScenarioTemplate)}
+            contextBuckets={contextBuckets}
+            contextForm={contextForm}
+            onContextFormChange={setContextForm}
+            onCreateContextItem={handleCreateContextItem}
+            onContextItemPatch={handleContextItemPatch}
           />
         ) : null}
 
         {!participantWorkspace && !participantView && !facilitatorView && activeNav === 'roster' ? (
-          <RosterPanel
+          <PeopleHubPanel
+            currentUser={currentUser}
+            activeView={activePeopleView}
+            onViewChange={setActivePeopleView}
             rosterMembers={rosterMembers}
             selectedRosterMemberId={selectedRosterMemberId}
             form={rosterForm}
@@ -1127,14 +1540,63 @@ function App() {
             onSelectMember={loadRosterMember}
             onSubmit={handleSaveRosterMember}
             onReset={resetRosterForm}
+            availableUsers={availableUsers}
+            selectedWorkspaceUserId={selectedWorkspaceUserId}
+            workspaceUserForm={workspaceUserForm}
+            onWorkspaceUserFormChange={setWorkspaceUserForm}
+            onSelectWorkspaceUser={loadWorkspaceUser}
+            onSaveWorkspaceUser={handleSaveWorkspaceUser}
+            onResetWorkspaceUser={resetWorkspaceUserForm}
+            onSetWorkspaceUserStatus={handleSetWorkspaceUserStatus}
+            workspaceInvites={workspaceInvites}
+            auditEvents={auditEvents}
+            latestInviteMagicLink={latestInviteMagicLink}
+            workspaceInviteForm={workspaceInviteForm}
+            onWorkspaceInviteFormChange={setWorkspaceInviteForm}
+            onCreateWorkspaceInvite={handleCreateWorkspaceInvite}
+            onRevokeWorkspaceInvite={handleRevokeWorkspaceInvite}
+            onReopenWorkspaceInvite={handleReopenWorkspaceInvite}
+            onSendWorkspaceInviteMagicLink={handleSendWorkspaceInviteMagicLink}
           />
         ) : null}
 
         {!participantWorkspace && !participantView && !facilitatorView && activeNav === 'launches' ? (
-          <LaunchesPanel
+          <ExercisesHubPanel
+            activeView={activeExercisesView}
+            onViewChange={setActiveExercisesView}
+            studioStep={activeStudioStep}
+            onStudioStepChange={setActiveStudioStep}
+            templates={templates}
+            selectedTemplate={selectedTemplate}
+            onSelectTemplate={setSelectedTemplate}
+            selectedScenarioTemplate={selectedScenarioTemplate}
+            scenarioDrafts={scenarioDrafts}
+            activeDraftId={activeDraftId}
+            draftForm={draftForm}
+            draftReviewNotes={draftReviewNotes}
+            onDraftFormChange={setDraftForm}
+            onDraftReviewNotesChange={setDraftReviewNotes}
+            onSaveDraft={handleDraftSave}
+            onLoadDraft={loadSavedDraft}
+            onStartNewDraft={() => {
+              setActiveExercisesView('studio');
+              setActiveStudioStep('templates');
+              setActiveDraftId(null);
+              setDraftForm(makeDefaultDraftInput(selectedScenarioTemplate));
+              setDraftReviewNotes('');
+            }}
+            onOpenMaterialsLibrary={() => {
+              setActiveNav('source-library');
+              setActiveMaterialsView('library');
+            }}
+            onOpenMaterialsContext={() => {
+              setActiveNav('source-library');
+              setActiveMaterialsView('context');
+            }}
             launches={launches}
             approvedDrafts={approvedDrafts}
             rosterMembers={rosterMembers}
+            participantAssignments={participantAssignments}
             currentUser={currentUser}
             launchForm={launchForm}
             onLaunchFormChange={setLaunchForm}
@@ -1145,20 +1607,27 @@ function App() {
             activeLaunchDetail={activeLaunchDetail}
             participantAssignmentForm={participantAssignmentForm}
             onParticipantAssignmentFormChange={setParticipantAssignmentForm}
+            participantTeamAssignmentForm={participantTeamAssignmentForm}
+            onParticipantTeamAssignmentFormChange={setParticipantTeamAssignmentForm}
             onCreateParticipantRun={handleCreateParticipantRun}
+            onAssignTeamToLaunch={handleAssignTeamToLaunch}
             onOpenParticipantRun={(runId) => void openParticipantRun(runId)}
             onOpenFacilitatorConsole={openFacilitatorConsole}
           />
         ) : null}
 
         {!participantWorkspace && !participantView && !facilitatorView && activeNav === 'reports' ? (
-          <ReportsPanel
+          <EvidencePanel
+            currentUser={currentUser}
             reports={reports}
             selectedReportId={selectedReportId}
             onSelectReport={(launchId) => void handleSelectReport(launchId)}
             activeReportDetail={activeReportDetail}
             exportBusy={Boolean(busyLabel)}
             onExportReport={(launchId, format) => void handleExportReport(launchId, format)}
+            reportCloseoutForm={reportCloseoutForm}
+            onReportCloseoutFormChange={setReportCloseoutForm}
+            onUpdateReportCloseout={(launchId, markClosed) => void handleUpdateReportCloseout(launchId, markClosed)}
           />
         ) : null}
 
@@ -1166,35 +1635,6 @@ function App() {
       </main>
     </div>
   );
-}
-
-function isWorkflowNav(nav: AdminNavId): boolean {
-  return nav === 'source-library' || nav === 'org-context' || nav === 'scenario-studio';
-}
-
-function getWorkflowStep(nav: AdminNavId, studioStep: StudioStep): StudioStep {
-  if (nav === 'source-library') return 'source-library';
-  if (nav === 'org-context') return 'org-context';
-  return studioStep;
-}
-
-function jumpToWorkflowStep(
-  step: StudioStep,
-  setActiveNav: (value: AdminNavId) => void,
-  setActiveStudioStep: (value: StudioStep) => void,
-) {
-  if (step === 'source-library') {
-    setActiveNav('source-library');
-    return;
-  }
-
-  if (step === 'org-context') {
-    setActiveNav('org-context');
-    return;
-  }
-
-  setActiveNav('scenario-studio');
-  setActiveStudioStep(step);
 }
 
 const tabletopStatusOptions: Array<LaunchDetail['status']> = ['scheduled', 'in_progress', 'completed'];
@@ -1284,6 +1724,90 @@ function buildParticipantCheckpoints(form: ParticipantResponseForm): Participant
   ];
 }
 
+function SignInPanel({
+  error,
+  busyLabel,
+  email,
+  previewAccounts,
+  onEmailChange,
+  onSubmit,
+  onUsePreviewAccount,
+}: {
+  error: string | null;
+  busyLabel: string | null;
+  email: string;
+  previewAccounts: PreviewAuthAccount[];
+  onEmailChange: (email: string) => void;
+  onSubmit: () => void;
+  onUsePreviewAccount: (email: string) => void;
+}) {
+  return (
+    <div className="auth-shell">
+      <section className="auth-panel auth-panel-primary">
+        <div className="eyebrow">Altira</div>
+        <h1>Resilience</h1>
+        <p>Rehearse the incidents your policies assume you can handle.</p>
+        <p className="subtle">Use your workspace email to open exercises, review evidence, and run the readiness program.</p>
+
+        {error ? <div className="notice notice-error">{error}</div> : null}
+
+        <div className="panel-form auth-form">
+          <label>
+            Workspace email
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => onEmailChange(event.target.value)}
+              placeholder="name@company.com"
+              autoComplete="email"
+            />
+          </label>
+          <button
+            type="button"
+            className="button-primary"
+            onClick={onSubmit}
+            disabled={!email.trim() || Boolean(busyLabel)}
+          >
+            {busyLabel ?? 'Sign in'}
+          </button>
+        </div>
+      </section>
+
+      <section className="auth-panel">
+        <h3>What you can do here</h3>
+        <ul className="muted-list">
+          <li>Review firm materials and confirm the internal context that should shape exercises.</li>
+          <li>Launch structured exercises for teams or leadership without losing operational control.</li>
+          <li>Review evidence, after-actions, and follow-up actions in one place.</li>
+        </ul>
+
+        {previewAccounts.length ? (
+          <>
+            <div className="panel-spacer" />
+            <h4>Preview workspace</h4>
+            <p className="subtle">Use a local demo account to review the product flow.</p>
+            <div className="auth-account-list">
+              {previewAccounts.map((account) => (
+                <button
+                  key={account.email}
+                  type="button"
+                  className="auth-account-card"
+                  onClick={() => onUsePreviewAccount(account.email)}
+                  disabled={Boolean(busyLabel)}
+                >
+                  <strong>{account.fullName}</strong>
+                  <span>{account.email}</span>
+                  <span className="table-note">{formatWorkspaceRoleLabel(account.role)}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
 function SummaryStrip({ cards }: { cards: AdminSummaryCard[] }) {
   return (
     <section className="summary-grid">
@@ -1298,41 +1822,704 @@ function SummaryStrip({ cards }: { cards: AdminSummaryCard[] }) {
   );
 }
 
-function HomePanel({
-  launches,
-  reports,
-  scenarioDrafts,
+function SectionTabs({
+  tabs,
+  activeId,
+  onChange,
 }: {
-  launches: LaunchSummary[];
-  reports: ReportSummary[];
-  scenarioDrafts: ScenarioDraft[];
+  tabs: Array<{ id: string; label: string }>;
+  activeId: string;
+  onChange: (id: string) => void;
 }) {
-  const reviewCount = scenarioDrafts.filter((draft) => draft.approvalStatus === 'ready_for_review').length;
-  const approvedDraftCount = scenarioDrafts.filter((draft) => draft.approvalStatus === 'approved').length;
+  return (
+    <section className="section-tabs" aria-label="Section tabs">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          className={tab.id === activeId ? 'section-tab active' : 'section-tab'}
+          onClick={() => onChange(tab.id)}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </section>
+  );
+}
 
+function OverviewPanel({
+  overview,
+  auditEvents,
+  onCreateExercise,
+  onReviewEvidence,
+  onLaunchTabletop,
+  onOpenMaterials,
+  onOpenExercises,
+  onOpenEvidence,
+}: {
+  overview: BootstrapPayload['overview'];
+  auditEvents: AuditEvent[];
+  onCreateExercise: () => void;
+  onReviewEvidence: () => void;
+  onLaunchTabletop: () => void;
+  onOpenMaterials: () => void;
+  onOpenExercises: () => void;
+  onOpenEvidence: () => void;
+}) {
   return (
     <section className="stack">
+      <div className="overview-hero">
+        <div className="overview-hero-copy">
+          <div className="eyebrow">Altira Resilience</div>
+          <h3>Rehearse the incidents your policies assume you can handle.</h3>
+          <p>Turn firm materials into structured exercises, keep launches visible, and close the loop with evidence.</p>
+        </div>
+        <div className="overview-action-grid">
+          <button type="button" className="button-primary" onClick={onCreateExercise}>
+            Create exercise
+          </button>
+          <button type="button" className="button-secondary" onClick={onReviewEvidence}>
+            Review evidence
+          </button>
+          <button type="button" className="button-secondary" onClick={onLaunchTabletop}>
+            Launch tabletop
+          </button>
+        </div>
+      </div>
+
+      <SummaryStrip cards={overview.programHealth} />
+
       <div className="panel-grid">
         <div className="panel">
           <div className="panel-header">
             <div>
-              <h3>What this slice proves</h3>
-              <p>The product now includes real source ingestion review, not just source metadata placeholders.</p>
+              <h3>Needs action today</h3>
+              <p>Keep blocked approvals, overdue work, and review-ready evidence in one place.</p>
             </div>
           </div>
-          <ul className="muted-list">
-            <li>Text-based continuity, cyber, vendor, and policy files can now be uploaded into the product.</li>
-            <li>Uploaded materials generate reviewable teams, vendors, and escalation-role suggestions before they affect context.</li>
-            <li>Launch control, participant delivery, and report detail continue to work on top of the same bounded object model.</li>
-          </ul>
+          <div className="stack-tight">
+            <div>
+              <div className="subsection-label">Pending approvals</div>
+              {overview.pendingApprovals.length ? (
+                <div className="queue-list">
+                  {overview.pendingApprovals.map((item) => (
+                    <article key={item.id} className="queue-item">
+                      <div>
+                        <strong>{item.title}</strong>
+                        <p>{item.note}</p>
+                      </div>
+                      <span className="badge">{item.statusLabel}</span>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state">No draft reviews, requested changes, or material reviews are waiting right now.</div>
+              )}
+            </div>
+
+            <div>
+              <div className="subsection-label">Overdue assignments</div>
+              {overview.overdueAssignments.length ? (
+                <div className="queue-list">
+                  {overview.overdueAssignments.map((run) => (
+                    <article key={run.id} className="queue-item">
+                      <div>
+                        <strong>{run.participantName}</strong>
+                        <p>
+                          {run.participantRole}
+                          {run.participantTeam ? ` · ${run.participantTeam}` : ''}
+                          {run.dueAt ? ` · due ${run.dueAt}` : ''}
+                        </p>
+                      </div>
+                      <span className={`badge status-${run.status}`}>{run.status.replace(/_/g, ' ')}</span>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state">No participant assignments are currently overdue.</div>
+              )}
+            </div>
+          </div>
+          <div className="button-row">
+            <button type="button" className="button-secondary" onClick={onOpenMaterials}>
+              Review materials
+            </button>
+            <button type="button" className="button-secondary" onClick={onOpenExercises}>
+              Open exercises
+            </button>
+          </div>
         </div>
 
         <div className="panel side-panel">
-          <h3>Current posture</h3>
+          <h3>Coverage gaps</h3>
+          <p>See which teams have not been exercised recently or still lack submitted evidence.</p>
+          {overview.coverageGaps.length ? (
+            <div className="queue-list">
+              {overview.coverageGaps.map((gap) => (
+                <article key={gap.team} className="queue-item compact">
+                  <div>
+                    <strong>{gap.team}</strong>
+                    <p>{gap.note}</p>
+                  </div>
+                  <div className="table-note">
+                    {gap.submittedMembers}/{gap.activeMembers} submitted
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">No coverage gaps are visible yet.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="panel-grid">
+        <div className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>Upcoming exercises</h3>
+              <p>Treat scheduled exercises like operational work, not background training.</p>
+            </div>
+          </div>
+          <LaunchTable launches={overview.upcomingExercises} />
+        </div>
+
+        <div className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>Evidence ready for review</h3>
+              <p>These launches already have enough evidence for review or export.</p>
+            </div>
+          </div>
+          {overview.evidenceReady.length ? <ReportTable reports={overview.evidenceReady} /> : <div className="empty-state">No evidence packages are ready yet.</div>}
+          <div className="button-row">
+            <button type="button" className="button-secondary" onClick={onOpenEvidence}>
+              Open evidence
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>Recent after-actions</h3>
+            <p>Use recent outcomes to tighten the program, not just archive reports.</p>
+          </div>
+        </div>
+        <ReportTable reports={overview.recentAfterActions} />
+      </div>
+
+      <div className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>Recent program activity</h3>
+            <p>Keep access changes, launch changes, assignments, and submissions visible.</p>
+          </div>
+        </div>
+        {auditEvents.length ? (
+          <div className="queue-list">
+            {auditEvents.map((event) => (
+              <article key={event.id} className="queue-item">
+                <div>
+                  <strong>{event.summary}</strong>
+                  <p>
+                    {event.detail ?? 'No additional detail recorded.'}
+                    {' · '}
+                    {event.actorName}
+                    {' · '}
+                    {formatDate(event.createdAt)}
+                  </p>
+                </div>
+                <span className={`badge status-${event.category === 'access' ? 'pending' : 'ready'}`}>{event.category}</span>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">No audit activity is visible yet.</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function MaterialsHubPanel({
+  activeView,
+  onViewChange,
+  documents,
+  selectedDocumentId,
+  onSelectDocument,
+  activeDocument,
+  uploadForm,
+  onUploadFormChange,
+  onUploadSubmit,
+  uploadResetKey,
+  onDocumentStatusChange,
+  onDocumentExtraction,
+  onQueueDocumentExtraction,
+  onSuggestionDismiss,
+  onSuggestionApply,
+  contextBuckets,
+  contextForm,
+  onContextFormChange,
+  onCreateContextItem,
+  onContextItemPatch,
+}: {
+  activeView: MaterialsView;
+  onViewChange: (view: MaterialsView) => void;
+  documents: DocumentSummary[];
+  selectedDocumentId: string | null;
+  onSelectDocument: (documentId: string) => void;
+  activeDocument: SourceDocumentDetail | null;
+  uploadForm: SourceUploadForm;
+  onUploadFormChange: Dispatch<SetStateAction<SourceUploadForm>>;
+  onUploadSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  uploadResetKey: number;
+  onDocumentStatusChange: (documentId: string, parseStatus: DocumentParseStatus) => Promise<void>;
+  onDocumentExtraction: (documentId: string) => void;
+  onQueueDocumentExtraction: (documentId: string) => void;
+  onSuggestionDismiss: (suggestionId: string) => void;
+  onSuggestionApply: (suggestionId: string) => void;
+  contextBuckets: ContextBucket[];
+  contextForm: ContextItemInput;
+  onContextFormChange: Dispatch<SetStateAction<ContextItemInput>>;
+  onCreateContextItem: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onContextItemPatch: (itemId: string, patch: Partial<ContextItemInput>) => Promise<void>;
+}) {
+  return (
+    <section className="stack">
+      <SectionTabs
+        tabs={[
+          { id: 'library', label: 'Source Library' },
+          { id: 'context', label: 'Context Review' },
+        ]}
+        activeId={activeView}
+        onChange={(value) => onViewChange(value as MaterialsView)}
+      />
+      {activeView === 'library' ? (
+        <SourceLibraryPanel
+          documents={documents}
+          selectedDocumentId={selectedDocumentId}
+          onSelectDocument={onSelectDocument}
+          activeDocument={activeDocument}
+          uploadForm={uploadForm}
+          onUploadFormChange={onUploadFormChange}
+          onUploadSubmit={onUploadSubmit}
+          uploadResetKey={uploadResetKey}
+          onDocumentStatusChange={onDocumentStatusChange}
+          onDocumentExtraction={onDocumentExtraction}
+          onQueueDocumentExtraction={onQueueDocumentExtraction}
+          onSuggestionDismiss={onSuggestionDismiss}
+          onSuggestionApply={onSuggestionApply}
+        />
+      ) : (
+        <OrgContextPanel
+          buckets={contextBuckets}
+          form={contextForm}
+          onFormChange={onContextFormChange}
+          onSubmit={onCreateContextItem}
+          onItemPatch={onContextItemPatch}
+        />
+      )}
+    </section>
+  );
+}
+
+function PeopleHubPanel({
+  currentUser,
+  activeView,
+  onViewChange,
+  rosterMembers,
+  selectedRosterMemberId,
+  form,
+  onFormChange,
+  onSelectMember,
+  onSubmit,
+  onReset,
+  availableUsers,
+  selectedWorkspaceUserId,
+  workspaceUserForm,
+  onWorkspaceUserFormChange,
+  onSelectWorkspaceUser,
+  onSaveWorkspaceUser,
+  onResetWorkspaceUser,
+  onSetWorkspaceUserStatus,
+  workspaceInvites,
+  auditEvents,
+  latestInviteMagicLink,
+  workspaceInviteForm,
+  onWorkspaceInviteFormChange,
+  onCreateWorkspaceInvite,
+  onRevokeWorkspaceInvite,
+  onReopenWorkspaceInvite,
+  onSendWorkspaceInviteMagicLink,
+}: {
+  currentUser: WorkspaceUser;
+  activeView: PeopleView;
+  onViewChange: (view: PeopleView) => void;
+  rosterMembers: RosterMember[];
+  selectedRosterMemberId: string | null;
+  form: RosterMemberInput;
+  onFormChange: Dispatch<SetStateAction<RosterMemberInput>>;
+  onSelectMember: (member: RosterMember | null) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onReset: () => void;
+  availableUsers: WorkspaceUser[];
+  selectedWorkspaceUserId: string | null;
+  workspaceUserForm: WorkspaceAccessForm;
+  onWorkspaceUserFormChange: Dispatch<SetStateAction<WorkspaceAccessForm>>;
+  onSelectWorkspaceUser: (user: WorkspaceUser | null) => void;
+  onSaveWorkspaceUser: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onResetWorkspaceUser: () => void;
+  onSetWorkspaceUserStatus: (user: WorkspaceUser, status: WorkspaceUser['status']) => Promise<void>;
+  workspaceInvites: WorkspaceInvite[];
+  auditEvents: AuditEvent[];
+  latestInviteMagicLink: WorkspaceInviteMagicLinkResult | null;
+  workspaceInviteForm: WorkspaceInviteForm;
+  onWorkspaceInviteFormChange: Dispatch<SetStateAction<WorkspaceInviteForm>>;
+  onCreateWorkspaceInvite: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onRevokeWorkspaceInvite: (inviteId: string) => void;
+  onReopenWorkspaceInvite: (inviteId: string) => Promise<void>;
+  onSendWorkspaceInviteMagicLink: (inviteId: string) => Promise<void>;
+}) {
+  const accessVisible = currentUser.role === 'admin';
+  const resolvedActiveView = accessVisible ? activeView : 'directory';
+
+  return (
+    <section className="stack">
+      <SectionTabs
+        tabs={
+          accessVisible
+            ? [
+                { id: 'directory', label: 'Participant Directory' },
+                { id: 'access', label: 'Workspace Access' },
+              ]
+            : [{ id: 'directory', label: 'Participant Directory' }]
+        }
+        activeId={resolvedActiveView}
+        onChange={(value) => onViewChange(value as PeopleView)}
+      />
+      {resolvedActiveView === 'directory' ? (
+        <RosterPanel
+          currentUser={currentUser}
+          rosterMembers={rosterMembers}
+          selectedRosterMemberId={selectedRosterMemberId}
+          form={form}
+          onFormChange={onFormChange}
+          onSelectMember={onSelectMember}
+          onSubmit={onSubmit}
+          onReset={onReset}
+        />
+      ) : (
+        <WorkspaceAccessPanel
+          currentUser={currentUser}
+          availableUsers={availableUsers}
+          rosterMembers={rosterMembers}
+          selectedWorkspaceUserId={selectedWorkspaceUserId}
+          workspaceUserForm={workspaceUserForm}
+          onWorkspaceUserFormChange={onWorkspaceUserFormChange}
+          onSelectWorkspaceUser={onSelectWorkspaceUser}
+          onSaveWorkspaceUser={onSaveWorkspaceUser}
+          onResetWorkspaceUser={onResetWorkspaceUser}
+          onSetWorkspaceUserStatus={onSetWorkspaceUserStatus}
+          workspaceInvites={workspaceInvites}
+          auditEvents={auditEvents}
+          latestInviteMagicLink={latestInviteMagicLink}
+          workspaceInviteForm={workspaceInviteForm}
+          onWorkspaceInviteFormChange={onWorkspaceInviteFormChange}
+          onCreateWorkspaceInvite={onCreateWorkspaceInvite}
+          onRevokeWorkspaceInvite={onRevokeWorkspaceInvite}
+          onReopenWorkspaceInvite={onReopenWorkspaceInvite}
+          onSendWorkspaceInviteMagicLink={onSendWorkspaceInviteMagicLink}
+        />
+      )}
+    </section>
+  );
+}
+
+function WorkspaceAccessPanel({
+  currentUser,
+  availableUsers,
+  rosterMembers,
+  selectedWorkspaceUserId,
+  workspaceUserForm,
+  onWorkspaceUserFormChange,
+  onSelectWorkspaceUser,
+  onSaveWorkspaceUser,
+  onResetWorkspaceUser,
+  onSetWorkspaceUserStatus,
+  workspaceInvites,
+  auditEvents,
+  latestInviteMagicLink,
+  workspaceInviteForm,
+  onWorkspaceInviteFormChange,
+  onCreateWorkspaceInvite,
+  onRevokeWorkspaceInvite,
+  onReopenWorkspaceInvite,
+  onSendWorkspaceInviteMagicLink,
+}: {
+  currentUser: WorkspaceUser;
+  availableUsers: WorkspaceUser[];
+  rosterMembers: RosterMember[];
+  selectedWorkspaceUserId: string | null;
+  workspaceUserForm: WorkspaceAccessForm;
+  onWorkspaceUserFormChange: Dispatch<SetStateAction<WorkspaceAccessForm>>;
+  onSelectWorkspaceUser: (user: WorkspaceUser | null) => void;
+  onSaveWorkspaceUser: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onResetWorkspaceUser: () => void;
+  onSetWorkspaceUserStatus: (user: WorkspaceUser, status: WorkspaceUser['status']) => Promise<void>;
+  workspaceInvites: WorkspaceInvite[];
+  auditEvents: AuditEvent[];
+  latestInviteMagicLink: WorkspaceInviteMagicLinkResult | null;
+  workspaceInviteForm: WorkspaceInviteForm;
+  onWorkspaceInviteFormChange: Dispatch<SetStateAction<WorkspaceInviteForm>>;
+  onCreateWorkspaceInvite: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onRevokeWorkspaceInvite: (inviteId: string) => void;
+  onReopenWorkspaceInvite: (inviteId: string) => void;
+  onSendWorkspaceInviteMagicLink: (inviteId: string) => Promise<void>;
+}) {
+  const rosterById = new Map(rosterMembers.map((member) => [member.id, member]));
+  const rosterTeams = Array.from(new Set(rosterMembers.map((member) => member.team))).sort((left, right) =>
+    left.localeCompare(right),
+  );
+  const pendingInvites = workspaceInvites.filter((invite) => invite.status === 'pending');
+  const accessAuditEvents = auditEvents.filter((event) => event.category === 'access').slice(0, 6);
+  const activeUsers = availableUsers.filter((user) => user.status === 'active');
+  const inactiveUsers = availableUsers.filter((user) => user.status === 'inactive');
+  const revokedInvites = workspaceInvites.filter((invite) => invite.status === 'revoked');
+  const activeAdmins = activeUsers.filter((user) => user.role === 'admin');
+
+  return (
+    <section className="stack">
+      <section className="summary-grid">
+        <article className="summary-card summary-ready">
+          <div className="summary-label">Active users</div>
+          <div className="summary-value">{activeUsers.length}</div>
+          <p>Workspace members who can currently sign in and operate inside Resilience.</p>
+        </article>
+        <article className="summary-card summary-neutral">
+          <div className="summary-label">Inactive users</div>
+          <div className="summary-value">{inactiveUsers.length}</div>
+          <p>Accounts held in the workspace without current sign-in access.</p>
+        </article>
+        <article className="summary-card summary-attention">
+          <div className="summary-label">Pending invites</div>
+          <div className="summary-value">{pendingInvites.length}</div>
+          <p>Invites waiting for first sign-in before they become active workspace users.</p>
+        </article>
+        <article className={`summary-card ${activeAdmins.length > 1 ? 'summary-ready' : 'summary-attention'}`}>
+          <div className="summary-label">Active admins</div>
+          <div className="summary-value">{activeAdmins.length}</div>
+          <p>Keep at least one active admin available so the workspace cannot be locked out.</p>
+        </article>
+      </section>
+
+      <div className="panel-grid">
+        <div className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>Workspace users</h3>
+              <p>The user layer governs who can administer programs, run tabletops, review evidence, or complete assigned exercises.</p>
+            </div>
+          </div>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Role</th>
+                <th>Capabilities</th>
+                <th>Team scope</th>
+                <th>Linked roster</th>
+                <th>Status</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {availableUsers.map((user) => {
+                const linkedRoster = user.rosterMemberId ? rosterById.get(user.rosterMemberId) : null;
+                const selected = user.id === selectedWorkspaceUserId;
+                const isCurrentUser = user.id === currentUser.id;
+                return (
+                  <tr
+                    key={user.id}
+                    className={selected ? 'table-row-selected' : undefined}
+                    onClick={() => onSelectWorkspaceUser(user)}
+                  >
+                    <td>
+                      <strong>{user.fullName}</strong>
+                      <div className="table-note">{user.email}</div>
+                    </td>
+                    <td>{formatWorkspaceRoleLabel(user.role)}</td>
+                    <td>
+                      {user.capabilities.length ? user.capabilities.map(formatWorkspaceCapabilityLabel).join(', ') : 'None'}
+                    </td>
+                    <td>{formatWorkspaceScopeLabel(user.role, user.scopeTeams, linkedRoster?.team ?? null)}</td>
+                    <td>{linkedRoster ? `${linkedRoster.fullName} · ${linkedRoster.team}` : 'No linked roster member'}</td>
+                    <td>
+                      <span className={`badge status-${user.status}`}>{user.status}</span>
+                    </td>
+                    <td>
+                      {user.status === 'active' ? (
+                        <button
+                          type="button"
+                          className="button-secondary table-button"
+                          disabled={isCurrentUser}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void onSetWorkspaceUserStatus(user, 'inactive');
+                          }}
+                        >
+                          Deactivate
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="button-secondary table-button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void onSetWorkspaceUserStatus(user, 'active');
+                          }}
+                        >
+                          Reactivate
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="panel side-panel">
+          <h3>{selectedWorkspaceUserId ? 'Edit workspace user' : 'Create workspace user'}</h3>
+          <form className="panel-form" onSubmit={(event) => void onSaveWorkspaceUser(event)}>
+            <label>
+              Full name
+              <input
+                value={workspaceUserForm.fullName}
+                onChange={(event) =>
+                  onWorkspaceUserFormChange((current) => ({ ...current, fullName: event.target.value }))
+                }
+              />
+            </label>
+            <label>
+              Email
+              <input
+                type="email"
+                value={workspaceUserForm.email}
+                onChange={(event) =>
+                  onWorkspaceUserFormChange((current) => ({ ...current, email: event.target.value }))
+                }
+              />
+            </label>
+            <label>
+              Role
+              <select
+                value={workspaceUserForm.role}
+                onChange={(event) =>
+                  onWorkspaceUserFormChange((current) => ({
+                    ...current,
+                    role: event.target.value as WorkspaceUser['role'],
+                    scopeTeams: event.target.value === 'manager' ? current.scopeTeams : [],
+                  }))
+                }
+              >
+                <option value="user">User</option>
+                <option value="manager">Manager</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+            <label>
+              Linked roster
+              <select
+                value={workspaceUserForm.rosterMemberId ?? ''}
+                onChange={(event) =>
+                  onWorkspaceUserFormChange((current) => ({
+                    ...current,
+                    rosterMemberId: event.target.value || null,
+                  }))
+                }
+              >
+                <option value="">No linked roster member</option>
+                {rosterMembers.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.fullName} · {member.team}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Status
+              <select
+                value={workspaceUserForm.status}
+                onChange={(event) =>
+                  onWorkspaceUserFormChange((current) => ({
+                    ...current,
+                    status: event.target.value as WorkspaceUser['status'],
+                  }))
+                }
+              >
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </label>
+            <label className="checkbox-inline">
+              <input
+                type="checkbox"
+                checked={workspaceUserForm.capabilities.includes('resilience_tabletop_facilitate')}
+                onChange={(event) =>
+                  onWorkspaceUserFormChange((current) => ({
+                    ...current,
+                    capabilities: event.target.checked ? ['resilience_tabletop_facilitate'] : [],
+                  }))
+                }
+              />
+              Tabletop facilitate
+            </label>
+            {workspaceUserForm.role === 'manager' ? (
+              <fieldset className="checkbox-group">
+                <legend>Manager team scope</legend>
+                {rosterTeams.length ? (
+                  rosterTeams.map((team) => (
+                    <label key={team} className="checkbox-inline">
+                      <input
+                        type="checkbox"
+                        checked={workspaceUserForm.scopeTeams.includes(team)}
+                        onChange={(event) =>
+                          onWorkspaceUserFormChange((current) => ({
+                            ...current,
+                            scopeTeams: event.target.checked
+                              ? [...current.scopeTeams, team].sort((left, right) => left.localeCompare(right))
+                              : current.scopeTeams.filter((entry) => entry !== team),
+                          }))
+                        }
+                      />
+                      {team}
+                    </label>
+                  ))
+                ) : (
+                  <div className="table-note">No roster teams exist yet.</div>
+                )}
+              </fieldset>
+            ) : null}
+            <div className="button-row">
+              <button type="submit" className="button-primary">
+                {selectedWorkspaceUserId ? 'Save user' : 'Create user'}
+              </button>
+              <button type="button" className="button-secondary" onClick={onResetWorkspaceUser}>
+                New user
+              </button>
+            </div>
+          </form>
+          <div className="panel-spacer" />
+          <h4>Current role model</h4>
           <ul className="muted-list">
-            <li>{reviewCount} draft{reviewCount === 1 ? '' : 's'} still need operator review before launch.</li>
-            <li>{approvedDraftCount} approved draft{approvedDraftCount === 1 ? '' : 's'} are eligible for launch creation.</li>
-            <li>Unsupported or image-heavy files now have a queue-backed follow-up path instead of staying stranded in a raw pending state.</li>
+            <li>Admins manage workspace settings, materials, people, exercises, launches, and evidence.</li>
+            <li>Managers can review launch and evidence posture for scoped teams without getting full admin write access.</li>
+            <li>Users only see the exercises assigned to their linked roster identity.</li>
+            <li>Product-specific powers now sit in capabilities, not new top-level suite roles.</li>
+            <li>The active admin tied to the current session cannot deactivate or demote itself.</li>
           </ul>
         </div>
       </div>
@@ -1341,21 +2528,579 @@ function HomePanel({
         <div className="panel">
           <div className="panel-header">
             <div>
-              <h3>Open launches</h3>
-              <p>Launches remain visible as scheduled operational work with participant completion attached to them.</p>
+              <h3>Invite queue</h3>
+              <p>Pending invites let admins stage access before a workspace user exists. Signing in with the invited email provisions the user automatically in this slice.</p>
             </div>
           </div>
-          <LaunchTable launches={launches} />
+          {workspaceInvites.length ? (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Invite</th>
+                  <th>Role</th>
+                  <th>Delivery</th>
+                  <th>Team scope</th>
+                  <th>Status</th>
+                  <th>Linked roster</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {workspaceInvites.map((invite) => {
+                  const linkedRoster = invite.rosterMemberId ? rosterById.get(invite.rosterMemberId) : null;
+                  return (
+                    <tr key={invite.id}>
+                      <td>
+                        <strong>{invite.fullName}</strong>
+                        <div className="table-note">{invite.email}</div>
+                      </td>
+                      <td>
+                        {formatWorkspaceRoleLabel(invite.role)}
+                        {invite.capabilities.length ? ` · ${invite.capabilities.map(formatWorkspaceCapabilityLabel).join(', ')}` : ''}
+                      </td>
+                      <td>{formatInviteMagicLinkState(invite)}</td>
+                      <td>{formatWorkspaceScopeLabel(invite.role, invite.scopeTeams, linkedRoster?.team ?? null)}</td>
+                      <td>
+                        <span className={`badge status-${invite.status}`}>{invite.status}</span>
+                      </td>
+                      <td>{linkedRoster ? `${linkedRoster.fullName} · ${linkedRoster.team}` : 'No linked roster member'}</td>
+                      <td>
+                        {invite.status === 'pending' ? (
+                          <div className="table-action-group">
+                            <button
+                              type="button"
+                              className="button-secondary table-button"
+                              onClick={() => void onSendWorkspaceInviteMagicLink(invite.id)}
+                            >
+                              {invite.magicLinkSentAt ? 'Resend link' : 'Send link'}
+                            </button>
+                            <button
+                              type="button"
+                              className="button-secondary table-button"
+                              onClick={() => onRevokeWorkspaceInvite(invite.id)}
+                            >
+                              Revoke
+                            </button>
+                          </div>
+                        ) : invite.status === 'revoked' ? (
+                          <button
+                            type="button"
+                            className="button-secondary table-button"
+                            onClick={() => onReopenWorkspaceInvite(invite.id)}
+                          >
+                            Reopen
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <div className="empty-state">No workspace invites exist yet.</div>
+          )}
+        </div>
+
+        <div className="panel side-panel">
+          <h3>Create invite</h3>
+          <form className="panel-form" onSubmit={(event) => void onCreateWorkspaceInvite(event)}>
+            <label>
+              Full name
+              <input
+                value={workspaceInviteForm.fullName}
+                onChange={(event) =>
+                  onWorkspaceInviteFormChange((current) => ({ ...current, fullName: event.target.value }))
+                }
+              />
+            </label>
+            <label>
+              Email
+              <input
+                type="email"
+                value={workspaceInviteForm.email}
+                onChange={(event) =>
+                  onWorkspaceInviteFormChange((current) => ({ ...current, email: event.target.value }))
+                }
+              />
+            </label>
+            <label>
+              Role
+              <select
+                value={workspaceInviteForm.role}
+                onChange={(event) =>
+                  onWorkspaceInviteFormChange((current) => ({
+                    ...current,
+                    role: event.target.value as WorkspaceUser['role'],
+                    scopeTeams: event.target.value === 'manager' ? current.scopeTeams : [],
+                  }))
+                }
+              >
+                <option value="user">User</option>
+                <option value="manager">Manager</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+            <label>
+              Linked roster
+              <select
+                value={workspaceInviteForm.rosterMemberId ?? ''}
+                onChange={(event) =>
+                  onWorkspaceInviteFormChange((current) => ({
+                    ...current,
+                    rosterMemberId: event.target.value || null,
+                  }))
+                }
+              >
+                <option value="">No linked roster member</option>
+                {rosterMembers.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.fullName} · {member.team}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="checkbox-inline">
+              <input
+                type="checkbox"
+                checked={workspaceInviteForm.capabilities.includes('resilience_tabletop_facilitate')}
+                onChange={(event) =>
+                  onWorkspaceInviteFormChange((current) => ({
+                    ...current,
+                    capabilities: event.target.checked ? ['resilience_tabletop_facilitate'] : [],
+                  }))
+                }
+              />
+              Tabletop facilitate
+            </label>
+            {workspaceInviteForm.role === 'manager' ? (
+              <fieldset className="checkbox-group">
+                <legend>Manager team scope</legend>
+                {rosterTeams.length ? (
+                  rosterTeams.map((team) => (
+                    <label key={team} className="checkbox-inline">
+                      <input
+                        type="checkbox"
+                        checked={workspaceInviteForm.scopeTeams.includes(team)}
+                        onChange={(event) =>
+                          onWorkspaceInviteFormChange((current) => ({
+                            ...current,
+                            scopeTeams: event.target.checked
+                              ? [...current.scopeTeams, team].sort((left, right) => left.localeCompare(right))
+                              : current.scopeTeams.filter((entry) => entry !== team),
+                          }))
+                        }
+                      />
+                      {team}
+                    </label>
+                  ))
+                ) : (
+                  <div className="table-note">No roster teams exist yet.</div>
+                )}
+              </fieldset>
+            ) : null}
+            <button type="submit" className="button-primary">
+              Create invite
+            </button>
+          </form>
+          <div className="panel-spacer" />
+          <h4>Access rules</h4>
+          <ul className="muted-list">
+            <li>Admins control workspace access, launches, and final evidence closeout.</li>
+            <li>Managers only see the teams assigned to their scope.</li>
+            <li>Invite links keep first-time access deliberate and traceable.</li>
+            <li>Reopened invites are blocked when the email already has active access in the workspace.</li>
+          </ul>
+          <div className="table-note">
+            {pendingInvites.length} pending invite{pendingInvites.length === 1 ? '' : 's'} and {revokedInvites.length} revoked
+            invite{revokedInvites.length === 1 ? '' : 's'} currently tracked.
+          </div>
+          {latestInviteMagicLink ? (
+            <>
+              <div className="panel-spacer" />
+              <h4>Latest magic link</h4>
+              <div className="notice">
+                <strong>{buildMagicLinkUrl(latestInviteMagicLink.magicLinkPath)}</strong>
+                <div className="table-note">Manual copy mode · expires {formatDate(latestInviteMagicLink.expiresAt)}</div>
+              </div>
+              <div className="button-row">
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(buildMagicLinkUrl(latestInviteMagicLink.magicLinkPath));
+                  }}
+                >
+                  Copy link
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>Recent access activity</h3>
+            <p>Use the audit trail to confirm who changed workspace access, when the change happened, and which records were affected.</p>
+          </div>
+        </div>
+        {accessAuditEvents.length ? (
+          <div className="queue-list">
+            {accessAuditEvents.map((event) => (
+              <article key={event.id} className="queue-item">
+                <div>
+                  <strong>{event.summary}</strong>
+                  <p>
+                    {event.detail ?? 'No additional detail recorded.'}
+                    {' · '}
+                    {event.actorName}
+                    {' · '}
+                    {formatDate(event.createdAt)}
+                  </p>
+                </div>
+                <span className="badge status-pending">{event.action.replace(/_/g, ' ')}</span>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">No access activity is visible yet.</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ExercisesHubPanel({
+  activeView,
+  onViewChange,
+  studioStep,
+  onStudioStepChange,
+  templates,
+  selectedTemplate,
+  onSelectTemplate,
+  selectedScenarioTemplate,
+  scenarioDrafts,
+  activeDraftId,
+  draftForm,
+  draftReviewNotes,
+  onDraftFormChange,
+  onDraftReviewNotesChange,
+  onSaveDraft,
+  onLoadDraft,
+  onStartNewDraft,
+  onOpenMaterialsLibrary,
+  onOpenMaterialsContext,
+  launches,
+  approvedDrafts,
+  rosterMembers,
+  participantAssignments,
+  currentUser,
+  launchForm,
+  onLaunchFormChange,
+  onLaunchDraftChange,
+  onCreateLaunch,
+  selectedLaunchId,
+  onSelectLaunch,
+  activeLaunchDetail,
+  participantAssignmentForm,
+  onParticipantAssignmentFormChange,
+  participantTeamAssignmentForm,
+  onParticipantTeamAssignmentFormChange,
+  onCreateParticipantRun,
+  onAssignTeamToLaunch,
+  onOpenParticipantRun,
+  onOpenFacilitatorConsole,
+}: {
+  activeView: ExercisesView;
+  onViewChange: (view: ExercisesView) => void;
+  studioStep: StudioStep;
+  onStudioStepChange: (value: StudioStep) => void;
+  templates: ScenarioTemplate[];
+  selectedTemplate: string;
+  onSelectTemplate: (value: string) => void;
+  selectedScenarioTemplate: ScenarioTemplate;
+  scenarioDrafts: ScenarioDraft[];
+  activeDraftId: string | null;
+  draftForm: ScenarioDraftInput;
+  draftReviewNotes: string;
+  onDraftFormChange: Dispatch<SetStateAction<ScenarioDraftInput>>;
+  onDraftReviewNotesChange: Dispatch<SetStateAction<string>>;
+  onSaveDraft: (nextStatus?: ScenarioApprovalStatus) => Promise<void>;
+  onLoadDraft: (draft: ScenarioDraft) => void;
+  onStartNewDraft: () => void;
+  onOpenMaterialsLibrary: () => void;
+  onOpenMaterialsContext: () => void;
+  launches: LaunchSummary[];
+  approvedDrafts: ScenarioDraft[];
+  rosterMembers: RosterMember[];
+  participantAssignments: ParticipantRun[];
+  currentUser: WorkspaceUser;
+  launchForm: LaunchInput;
+  onLaunchFormChange: Dispatch<SetStateAction<LaunchInput>>;
+  onLaunchDraftChange: (draftId: string) => void;
+  onCreateLaunch: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  selectedLaunchId: string | null;
+  onSelectLaunch: (launchId: string) => void;
+  activeLaunchDetail: LaunchDetail | null;
+  participantAssignmentForm: ParticipantRunInput;
+  onParticipantAssignmentFormChange: Dispatch<SetStateAction<ParticipantRunInput>>;
+  participantTeamAssignmentForm: TeamAssignmentForm;
+  onParticipantTeamAssignmentFormChange: Dispatch<SetStateAction<TeamAssignmentForm>>;
+  onCreateParticipantRun: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onAssignTeamToLaunch: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onOpenParticipantRun: (runId: string) => void;
+  onOpenFacilitatorConsole: (launchId: string) => void;
+}) {
+  return (
+    <section className="stack">
+      <SectionTabs
+        tabs={[
+          { id: 'pipeline', label: 'Program' },
+          { id: 'studio', label: 'Scenario Studio' },
+          { id: 'launch-queue', label: 'Launches' },
+        ]}
+        activeId={activeView}
+        onChange={(value) => onViewChange(value as ExercisesView)}
+      />
+
+      {activeView === 'pipeline' ? (
+        <ExercisePipelinePanel
+          launches={launches}
+          scenarioDrafts={scenarioDrafts}
+          participantAssignments={participantAssignments}
+          onOpenStudio={() => onViewChange('studio')}
+          onOpenLaunchQueue={() => onViewChange('launch-queue')}
+          onLoadDraft={onLoadDraft}
+        />
+      ) : null}
+
+      {activeView === 'studio' ? (
+        <section className="stack">
+          <div className="panel">
+            <div className="panel-header">
+              <div>
+                <h3>Scenario Studio</h3>
+                <p>Build a structured exercise from approved materials and confirmed internal context.</p>
+              </div>
+            </div>
+            <div className="button-row">
+              <button type="button" className="button-secondary" onClick={onOpenMaterialsLibrary}>
+                Review source library
+              </button>
+              <button type="button" className="button-secondary" onClick={onOpenMaterialsContext}>
+                Review context inputs
+              </button>
+            </div>
+          </div>
+
+          <section className="stepper">
+            {studioSteps.map((step, index) => (
+              <button
+                key={step}
+                type="button"
+                className={step === studioStep ? 'step active' : 'step'}
+                onClick={() => onStudioStepChange(step)}
+              >
+                <span className="step-index">0{index + 1}</span>
+                <span>{stepTitles[step]}</span>
+              </button>
+            ))}
+          </section>
+
+          {studioStep === 'templates' ? (
+            <TemplatePanel
+              templates={templates}
+              selectedTemplate={selectedTemplate}
+              onSelect={onSelectTemplate}
+              onContinue={() => {
+                onStudioStepChange('configuration');
+                onStartNewDraft();
+              }}
+            />
+          ) : (
+            <ConfigurationPanel
+              selectedTemplate={selectedScenarioTemplate}
+              scenarioDrafts={scenarioDrafts}
+              activeDraftId={activeDraftId}
+              form={draftForm}
+              reviewNotes={draftReviewNotes}
+              onFormChange={onDraftFormChange}
+              onReviewNotesChange={onDraftReviewNotesChange}
+              onBack={() => onStudioStepChange('templates')}
+              onSaveDraft={onSaveDraft}
+              onLoadDraft={onLoadDraft}
+              onStartNewDraft={onStartNewDraft}
+            />
+          )}
+        </section>
+      ) : null}
+
+      {activeView === 'launch-queue' ? (
+        <LaunchesPanel
+          launches={launches}
+          approvedDrafts={approvedDrafts}
+          rosterMembers={rosterMembers}
+          currentUser={currentUser}
+          launchForm={launchForm}
+          onLaunchFormChange={onLaunchFormChange}
+          onLaunchDraftChange={onLaunchDraftChange}
+          onCreateLaunch={onCreateLaunch}
+          selectedLaunchId={selectedLaunchId}
+          onSelectLaunch={onSelectLaunch}
+            activeLaunchDetail={activeLaunchDetail}
+            participantAssignmentForm={participantAssignmentForm}
+            onParticipantAssignmentFormChange={onParticipantAssignmentFormChange}
+            participantTeamAssignmentForm={participantTeamAssignmentForm}
+            onParticipantTeamAssignmentFormChange={onParticipantTeamAssignmentFormChange}
+            onCreateParticipantRun={onCreateParticipantRun}
+            onAssignTeamToLaunch={onAssignTeamToLaunch}
+            onOpenParticipantRun={onOpenParticipantRun}
+            onOpenFacilitatorConsole={onOpenFacilitatorConsole}
+          />
+      ) : null}
+    </section>
+  );
+}
+
+function ExercisePipelinePanel({
+  launches,
+  scenarioDrafts,
+  participantAssignments,
+  onOpenStudio,
+  onOpenLaunchQueue,
+  onLoadDraft,
+}: {
+  launches: LaunchSummary[];
+  scenarioDrafts: ScenarioDraft[];
+  participantAssignments: ParticipantRun[];
+  onOpenStudio: () => void;
+  onOpenLaunchQueue: () => void;
+  onLoadDraft: (draft: ScenarioDraft) => void;
+}) {
+  const readyForReview = scenarioDrafts.filter((draft) => draft.approvalStatus === 'ready_for_review').length;
+  const changesRequested = scenarioDrafts.filter((draft) => draft.approvalStatus === 'changes_requested').length;
+  const approvedDrafts = scenarioDrafts.filter((draft) => draft.approvalStatus === 'approved').length;
+  const activeExercises = launches.filter((launch) => launch.status === 'scheduled' || launch.status === 'in_progress').length;
+  const overdueAssignments = participantAssignments.filter(
+    (run) => run.dueAt !== null && run.status !== 'submitted' && run.dueAt < new Date().toISOString().slice(0, 10),
+  ).length;
+
+  const pipelineCards: AdminSummaryCard[] = [
+    {
+      id: 'exercise-pipeline-active',
+      label: 'Active exercises',
+      value: String(activeExercises),
+      note: activeExercises > 0 ? 'Exercises are currently scheduled or in progress.' : 'No exercises are active right now.',
+      tone: activeExercises > 0 ? 'ready' : 'neutral',
+    },
+    {
+      id: 'exercise-pipeline-review',
+      label: 'Ready for review',
+      value: String(readyForReview),
+      note: readyForReview > 0 ? 'These drafts are blocked until an operator reviews them.' : 'No drafts are waiting on review.',
+      tone: readyForReview > 0 ? 'attention' : 'ready',
+    },
+    {
+      id: 'exercise-pipeline-rework',
+      label: 'Changes requested',
+      value: String(changesRequested),
+      note:
+        changesRequested > 0
+          ? 'These drafts need revision before they can move into launch planning.'
+          : 'No drafts are currently waiting on author revisions.',
+      tone: changesRequested > 0 ? 'attention' : 'ready',
+    },
+    {
+      id: 'exercise-pipeline-approved',
+      label: 'Approved drafts',
+      value: String(approvedDrafts),
+      note: approvedDrafts > 0 ? 'Approved drafts can move directly into the launch queue.' : 'No drafts are approved for launch yet.',
+      tone: approvedDrafts > 0 ? 'ready' : 'neutral',
+    },
+    {
+      id: 'exercise-pipeline-overdue',
+      label: 'Overdue assignments',
+      value: String(overdueAssignments),
+      note: overdueAssignments > 0 ? 'Some assigned runs are now past due.' : 'No exercise assignments are overdue.',
+      tone: overdueAssignments > 0 ? 'attention' : 'ready',
+    },
+  ];
+
+  const prioritizedDrafts = scenarioDrafts
+    .slice()
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, 6);
+
+  return (
+    <section className="stack">
+      <SummaryStrip cards={pipelineCards} />
+
+      <div className="panel-grid">
+        <div className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>Drafts and approvals</h3>
+              <p>Keep draft review, approval, and launch readiness visible in one place.</p>
+            </div>
+            <button type="button" className="button-primary" onClick={onOpenStudio}>
+              Create exercise
+            </button>
+          </div>
+          {prioritizedDrafts.length ? (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Draft</th>
+                  <th>Status</th>
+                  <th>Mode</th>
+                  <th>Start</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {prioritizedDrafts.map((draft) => (
+                  <tr key={draft.id}>
+                    <td>
+                      <strong>{draft.title}</strong>
+                      <div className="table-note">{draft.audience}</div>
+                    </td>
+                    <td>
+                      <span className={`badge status-${draft.approvalStatus}`}>
+                        {formatScenarioApprovalStatusLabel(draft.approvalStatus)}
+                      </span>
+                      {draft.approvalStatus === 'changes_requested' && draft.reviewerNotes ? (
+                        <div className="table-note">{draft.reviewerNotes}</div>
+                      ) : null}
+                    </td>
+                    <td>{draft.launchMode === 'tabletop' ? 'Tabletop' : 'Individual'}</td>
+                    <td>{draft.scheduledStartAt ?? 'Not scheduled'}</td>
+                    <td>
+                      <button type="button" className="button-secondary table-button" onClick={() => onLoadDraft(draft)}>
+                        Open draft
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="empty-state">No exercise drafts exist yet. Create the first exercise in Scenario Studio.</div>
+          )}
         </div>
 
         <div className="panel">
           <div className="panel-header">
             <div>
-              <h3>Recent reports</h3>
-              <p>Reports still reflect participant evidence and deterministic checkpoints from real launch data.</p>
+              <h3>Live launches</h3>
+              <p>Approved exercises become live operational work with assignment, completion, and evidence attached.</p>
             </div>
+            <button type="button" className="button-secondary" onClick={onOpenLaunchQueue}>
+              Open launches
+            </button>
           </div>
-          <ReportTable reports={reports} />
+          <LaunchTable launches={launches.slice(0, 6)} />
         </div>
       </div>
     </section>
@@ -1377,13 +3122,13 @@ function ParticipantHomePanel({
 
   return (
     <section className="panel-grid">
-      <div className="panel">
-        <div className="panel-header">
-          <div>
-            <h3>My assigned exercises</h3>
-            <p>Your role can only access runs assigned to you. Admin workflows and reporting stay separated.</p>
+        <div className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>My assigned exercises</h3>
+              <p>Focus on the exercises assigned to you, complete the required decisions, and submit a response tied to the firm&apos;s procedure.</p>
+            </div>
           </div>
-        </div>
         {participantAssignments.length ? (
           <table className="table">
             <thead>
@@ -1426,11 +3171,11 @@ function ParticipantHomePanel({
       </div>
 
       <div className="panel side-panel">
-        <h3>Access boundary</h3>
+        <h3>How this works</h3>
         <ul className="muted-list">
-          <li>You can only open runs assigned to your linked roster identity.</li>
-          <li>Scenario authoring, launch administration, and reporting stay on the operator side of the product.</li>
-          <li>Your submitted answers still write into the same deterministic evidence record used by managers and audit reviewers.</li>
+          <li>Complete the exercises assigned to your role and team.</li>
+          <li>Your submission becomes part of the evidence package reviewers use later.</li>
+          <li>Required fields drive scoring; notes help improve the next run.</li>
         </ul>
       </div>
     </section>
@@ -1472,8 +3217,8 @@ function SourceLibraryPanel({
         <div className="panel">
           <div className="panel-header">
             <div>
-              <h3>Source library</h3>
-              <p>Stored uploads now show extraction state and reviewable suggestion counts per document.</p>
+              <h3>Firm materials</h3>
+              <p>Keep continuity plans, playbooks, vendor lists, and policy files in one reviewed materials library.</p>
             </div>
           </div>
           <table className="table">
@@ -1522,7 +3267,7 @@ function SourceLibraryPanel({
           <div className="panel-header">
             <div>
               <h3>Document review</h3>
-              <p>Apply or dismiss extracted suggestions before they become part of the structured organization context.</p>
+              <p>Review extracted suggestions before they become part of the organization context used in exercise creation.</p>
             </div>
           </div>
           {activeDocument ? (
@@ -1602,13 +3347,11 @@ function SourceLibraryPanel({
           </button>
         </form>
         <div className="panel-spacer" />
-        <h4>Current upload limits</h4>
+        <h4>Upload guidance</h4>
         <ul className="muted-list">
-          <li>Supports text, markdown, csv, json, pdf, docx, xlsx, pptx, and common image files.</li>
-          <li>Files must be under 5 MB in this pass.</li>
-          <li>PDF, Office, and other binary files require an R2 bucket in this environment.</li>
-          <li>PDF, DOCX, XLSX, and PPTX now extract text when possible. Legacy .doc, .xls, and .ppt stay stored but unparsed unless a later queue fallback can help.</li>
-          <li>When usable text is still missing, R2-backed files can queue a background AI extraction or OCR follow-up.</li>
+          <li>Supports text, PDF, modern Office files, spreadsheets, presentations, and common image files.</li>
+          <li>Files must stay under 5 MB in the current product pass.</li>
+          <li>Some uploaded files may need background extraction before suggestions appear.</li>
           <li>Only extracted text creates suggestions, and suggestions still require operator review.</li>
         </ul>
       </div>
@@ -1650,7 +3393,7 @@ function SourceDocumentDetailPanel({
           <strong>{document.byteSize ?? 'N/A'}</strong>
         </article>
         <article className="stat-card">
-          <span className="summary-label">Storage backend</span>
+          <span className="summary-label">Storage</span>
           <strong>{document.storageBackend ? formatStorageBackendLabel(document.storageBackend) : 'No stored backend'}</strong>
         </article>
         <article className="stat-card">
@@ -1692,22 +3435,26 @@ function SourceDocumentDetailPanel({
       </div>
 
       <div className="detail-card">
-        <span className="summary-label">Extracted text artifact</span>
+        <span className="summary-label">Extracted text</span>
         <ExtractionProvenancePanel
           provenance={document.extractionProvenance}
           emptyMessage="No extracted-text artifact has been recorded for this document yet."
         />
         <p className="detail-footnote">
-          The original file, extracted text, review suggestions, and approved context stay separate so extraction can be
-          rerun without silently changing approved records.
+          Source file, extracted text, review suggestions, and approved context stay separate so reviewed records do not
+          change silently.
         </p>
       </div>
 
       <ExtractionJobCard job={document.latestExtractionJob} />
 
       <div className="detail-card">
-        <span className="summary-label">Stored object</span>
-        <p>{document.storageObjectKey ?? 'Inline source storage (no R2 object key recorded).'}</p>
+        <span className="summary-label">Source storage</span>
+        <p>
+          {document.storageBackend === 'r2'
+            ? 'Original file stored for review and follow-up extraction.'
+            : 'Inline text stored directly in the workspace record.'}
+        </p>
       </div>
 
       <div className="detail-card">
@@ -1860,7 +3607,7 @@ function OrgContextPanel({
         <div className="panel-header">
           <div>
             <h3>Context review</h3>
-            <p>Review state and required flags now save against real context records.</p>
+            <p>Confirm the teams, vendors, escalation roles, and internal language that should shape exercise behavior.</p>
           </div>
         </div>
         <div className="bucket-list">
@@ -1949,6 +3696,7 @@ function OrgContextPanel({
 }
 
 function RosterPanel({
+  currentUser,
   rosterMembers,
   selectedRosterMemberId,
   form,
@@ -1957,6 +3705,7 @@ function RosterPanel({
   onSubmit,
   onReset,
 }: {
+  currentUser: WorkspaceUser;
   rosterMembers: RosterMember[];
   selectedRosterMemberId: string | null;
   form: RosterMemberInput;
@@ -1965,6 +3714,8 @@ function RosterPanel({
   onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onReset: () => void;
 }) {
+  const canEditRoster = currentUser.role === 'admin';
+
   return (
     <section className="panel-grid">
       <div className="panel">
@@ -2005,9 +3756,15 @@ function RosterPanel({
                     <span className={`badge status-${member.status}`}>{member.status}</span>
                   </td>
                   <td>
-                    <button type="button" className="button-secondary table-button" onClick={() => onSelectMember(member)}>
-                      Edit
-                    </button>
+                    {canEditRoster ? (
+                      <button type="button" className="button-secondary table-button" onClick={() => onSelectMember(member)}>
+                        Edit
+                      </button>
+                    ) : (
+                      <button type="button" className="button-secondary table-button" onClick={() => onSelectMember(member)}>
+                        View
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -2021,17 +3778,20 @@ function RosterPanel({
       <div className="panel side-panel">
         <div className="panel-header">
           <div>
-            <h3>{selectedRosterMemberId ? 'Edit roster member' : 'Add roster member'}</h3>
+            <h3>{canEditRoster ? (selectedRosterMemberId ? 'Edit roster member' : 'Add roster member') : 'Directory detail'}</h3>
             <p>
-              Keep the directory lean and operational. This is the assignment source for launches, not a general HR system.
+              {canEditRoster
+                ? 'Keep the directory lean and operational. This is the assignment source for launches, not a general HR system.'
+                : 'Managers can review the directory for their scoped teams here, but directory edits remain an admin workflow in this slice.'}
             </p>
           </div>
-          {selectedRosterMemberId ? (
+          {canEditRoster && selectedRosterMemberId ? (
             <button type="button" className="button-secondary" onClick={onReset}>
               New entry
             </button>
           ) : null}
         </div>
+        {canEditRoster ? (
         <form className="panel-form" onSubmit={(event) => void onSubmit(event)}>
           <label>
             Full name
@@ -2098,6 +3858,19 @@ function RosterPanel({
             {selectedRosterMemberId ? 'Save roster member' : 'Add roster member'}
           </button>
         </form>
+        ) : selectedRosterMemberId ? (
+          <div className="detail-card compact-detail-card">
+            <span className="summary-label">{form.fullName}</span>
+            <p>
+              {form.roleTitle}
+              {form.team ? ` · ${form.team}` : ''}
+              {form.managerName ? ` · Manager: ${form.managerName}` : ''}
+              {form.email ? ` · ${form.email}` : ''}
+            </p>
+          </div>
+        ) : (
+          <div className="empty-state">Select a scoped roster member to review their role, team, and manager information.</div>
+        )}
       </div>
     </section>
   );
@@ -2119,7 +3892,7 @@ function TemplatePanel({
       <div className="panel-header">
         <div>
           <h3>Choose a template</h3>
-          <p>Template-first authoring keeps v1 guided and reviewable.</p>
+          <p>Start from a controlled template so the exercise stays realistic, structured, and aligned to the program.</p>
         </div>
         <button type="button" className="button-primary" onClick={onContinue}>
           Start draft from template
@@ -2151,7 +3924,9 @@ function ConfigurationPanel({
   scenarioDrafts,
   activeDraftId,
   form,
+  reviewNotes,
   onFormChange,
+  onReviewNotesChange,
   onBack,
   onSaveDraft,
   onLoadDraft,
@@ -2161,19 +3936,23 @@ function ConfigurationPanel({
   scenarioDrafts: ScenarioDraft[];
   activeDraftId: string | null;
   form: ScenarioDraftInput;
+  reviewNotes: string;
   onFormChange: Dispatch<SetStateAction<ScenarioDraftInput>>;
+  onReviewNotesChange: Dispatch<SetStateAction<string>>;
   onBack: () => void;
   onSaveDraft: (nextStatus?: ScenarioApprovalStatus) => Promise<void>;
   onLoadDraft: (draft: ScenarioDraft) => void;
   onStartNewDraft: () => void;
 }) {
+  const activeDraft = activeDraftId ? scenarioDrafts.find((draft) => draft.id === activeDraftId) ?? null : null;
+
   return (
     <section className="panel-grid">
       <div className="panel">
         <div className="panel-header">
           <div>
             <h3>Scenario configuration</h3>
-            <p>{activeDraftId ? 'Editing saved draft' : 'Create a new saved draft from the selected template.'}</p>
+            <p>{activeDraftId ? 'Refine a saved exercise draft before review or launch.' : 'Build a new exercise draft from the selected template.'}</p>
           </div>
           <button type="button" className="button-secondary" onClick={onBack}>
             Back to templates
@@ -2252,6 +4031,14 @@ function ConfigurationPanel({
               }
             />
           </label>
+          <label className="full-width">
+            Reviewer notes
+            <textarea
+              value={reviewNotes}
+              onChange={(event) => onReviewNotesChange(event.target.value)}
+              placeholder="Use this for approval notes or clear change requests."
+            />
+          </label>
         </div>
         <div className="button-row">
           <button type="button" className="button-secondary" onClick={() => void onSaveDraft('draft')}>
@@ -2259,6 +4046,14 @@ function ConfigurationPanel({
           </button>
           <button type="button" className="button-secondary" onClick={() => void onSaveDraft('ready_for_review')}>
             Submit for review
+          </button>
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={() => void onSaveDraft('changes_requested')}
+            disabled={!activeDraftId}
+          >
+            Request changes
           </button>
           <button type="button" className="button-primary" onClick={() => void onSaveDraft('approved')}>
             Approve draft
@@ -2274,6 +4069,22 @@ function ConfigurationPanel({
             <li key={input}>{input}</li>
           ))}
         </ul>
+        <div className="detail-card compact-detail-card draft-review-card">
+          <div className="subsection-label">Review posture</div>
+          <div className="draft-review-status">
+            <span className={`badge status-${activeDraft?.approvalStatus ?? form.approvalStatus}`}>
+              {formatScenarioApprovalStatusLabel(activeDraft?.approvalStatus ?? form.approvalStatus)}
+            </span>
+          </div>
+          <p>
+            {activeDraft?.reviewedByName && activeDraft?.reviewedAt
+              ? `Last review by ${activeDraft.reviewedByName} on ${formatDate(activeDraft.reviewedAt)}.`
+              : activeDraftId
+                ? 'This draft has not been formally reviewed yet.'
+                : 'New drafts can be saved, submitted for review, or approved from here.'}
+          </p>
+          {activeDraft?.reviewerNotes ? <p className="draft-review-note">{activeDraft.reviewerNotes}</p> : null}
+        </div>
         <h4>Saved drafts</h4>
         <div className="draft-list">
           {scenarioDrafts.length ? (
@@ -2285,7 +4096,10 @@ function ConfigurationPanel({
                 onClick={() => onLoadDraft(draft)}
               >
                 <strong>{draft.title}</strong>
-                <span>{draft.approvalStatus.replace(/_/g, ' ')}</span>
+                <span>{formatScenarioApprovalStatusLabel(draft.approvalStatus)}</span>
+                {draft.approvalStatus === 'changes_requested' && draft.reviewerNotes ? (
+                  <span className="draft-item-note">{draft.reviewerNotes}</span>
+                ) : null}
               </button>
             ))
           ) : (
@@ -2314,7 +4128,10 @@ function LaunchesPanel({
   activeLaunchDetail,
   participantAssignmentForm,
   onParticipantAssignmentFormChange,
+  participantTeamAssignmentForm,
+  onParticipantTeamAssignmentFormChange,
   onCreateParticipantRun,
+  onAssignTeamToLaunch,
   onOpenParticipantRun,
   onOpenFacilitatorConsole,
 }: {
@@ -2331,7 +4148,10 @@ function LaunchesPanel({
   activeLaunchDetail: LaunchDetail | null;
   participantAssignmentForm: ParticipantRunInput;
   onParticipantAssignmentFormChange: Dispatch<SetStateAction<ParticipantRunInput>>;
+  participantTeamAssignmentForm: TeamAssignmentForm;
+  onParticipantTeamAssignmentFormChange: Dispatch<SetStateAction<TeamAssignmentForm>>;
   onCreateParticipantRun: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onAssignTeamToLaunch: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onOpenParticipantRun: (runId: string) => void;
   onOpenFacilitatorConsole: (launchId: string) => void;
 }) {
@@ -2342,7 +4162,7 @@ function LaunchesPanel({
           <div className="panel-header">
             <div>
               <h3>Launch queue</h3>
-              <p>Approved drafts are now promoted into explicit launches with real participant progress behind them.</p>
+              <p>Approved drafts become live exercises with assignment, completion, and evidence attached.</p>
             </div>
           </div>
           <LaunchTable launches={launches} activeId={selectedLaunchId} onSelect={onSelectLaunch} />
@@ -2352,7 +4172,7 @@ function LaunchesPanel({
           <div className="panel-header">
             <div>
               <h3>Launch detail</h3>
-              <p>Participant assignment and scenario brief review happen at the launch level, not inside the template picker.</p>
+              <p>Review the scenario brief, assign the right people, and manage the live exercise from one launch record.</p>
             </div>
           </div>
           {activeLaunchDetail ? (
@@ -2362,7 +4182,10 @@ function LaunchesPanel({
               currentUser={currentUser}
               participantAssignmentForm={participantAssignmentForm}
               onParticipantAssignmentFormChange={onParticipantAssignmentFormChange}
+              participantTeamAssignmentForm={participantTeamAssignmentForm}
+              onParticipantTeamAssignmentFormChange={onParticipantTeamAssignmentFormChange}
               onCreateParticipantRun={onCreateParticipantRun}
+              onAssignTeamToLaunch={onAssignTeamToLaunch}
               onOpenParticipantRun={onOpenParticipantRun}
               onOpenFacilitatorConsole={onOpenFacilitatorConsole}
             />
@@ -2372,10 +4195,10 @@ function LaunchesPanel({
         </div>
       </div>
 
-      <div className="panel side-panel">
+        <div className="panel side-panel">
         <h3>Create launch</h3>
         {currentUser.role !== 'admin' ? (
-          <div className="empty-state">Only admins can create launches in this slice.</div>
+          <div className="empty-state">Only admins can create launches from approved drafts.</div>
         ) : approvedDrafts.length ? (
           <form className="panel-form" onSubmit={(event) => void onCreateLaunch(event)}>
             <label>
@@ -2425,11 +4248,11 @@ function LaunchesPanel({
           <div className="empty-state">Approve a scenario draft first. Only approved drafts can become launches.</div>
         )}
         <div className="panel-spacer" />
-        <h4>What is fixed at launch time</h4>
+        <h4>What gets locked at launch</h4>
         <ul className="muted-list">
           <li>Scenario brief and learning objectives are copied from the approved draft.</li>
           <li>Participant runs attach to the launch, not to the scenario template.</li>
-          <li>Report evidence is generated from participant submissions against deterministic checkpoints.</li>
+          <li>Evidence is generated from the launch roster, participant submissions, and facilitator notes.</li>
         </ul>
       </div>
     </section>
@@ -2442,7 +4265,10 @@ function LaunchDetailPanel({
   currentUser,
   participantAssignmentForm,
   onParticipantAssignmentFormChange,
+  participantTeamAssignmentForm,
+  onParticipantTeamAssignmentFormChange,
   onCreateParticipantRun,
+  onAssignTeamToLaunch,
   onOpenParticipantRun,
   onOpenFacilitatorConsole,
 }: {
@@ -2451,14 +4277,21 @@ function LaunchDetailPanel({
   currentUser: WorkspaceUser;
   participantAssignmentForm: ParticipantRunInput;
   onParticipantAssignmentFormChange: Dispatch<SetStateAction<ParticipantRunInput>>;
+  participantTeamAssignmentForm: TeamAssignmentForm;
+  onParticipantTeamAssignmentFormChange: Dispatch<SetStateAction<TeamAssignmentForm>>;
   onCreateParticipantRun: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onAssignTeamToLaunch: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onOpenParticipantRun: (runId: string) => void;
   onOpenFacilitatorConsole: (launchId: string) => void;
 }) {
   const selectedRosterMember =
     rosterMembers.find((member) => member.id === participantAssignmentForm.rosterMemberId) ?? null;
-  const canManageAssignments = currentUser.role === 'admin';
-  const canUseFacilitatorConsole = currentUser.role === 'admin' || currentUser.role === 'facilitator';
+  const assignableTeams = Array.from(
+    new Set(rosterMembers.filter((member) => member.status === 'active').map((member) => member.team)),
+  ).sort((left, right) => left.localeCompare(right));
+  const canManageAssignments = currentUser.role === 'admin' || currentUser.role === 'manager';
+  const canUseFacilitatorConsole =
+    currentUser.role === 'admin' || hasWorkspaceCapability(currentUser, 'resilience_tabletop_facilitate');
 
   return (
     <div className="stack">
@@ -2524,7 +4357,7 @@ function LaunchDetailPanel({
               <p>
                 {launch.mode === 'tabletop'
                   ? 'Tabletop seats stay attached to the launch so facilitator review and later evidence packages use the same roster.'
-                  : 'Each participant run opens the same bounded exercise surface and produces its own evidence record.'}
+                  : 'Each participant run opens the assigned exercise workspace and produces its own evidence record.'}
               </p>
             </div>
           </div>
@@ -2570,129 +4403,173 @@ function LaunchDetailPanel({
         </div>
 
         <div className="panel inset-panel">
-          <h4>{launch.mode === 'tabletop' ? 'Add leader seat' : 'Add participant'}</h4>
+          <h4>{launch.mode === 'tabletop' ? 'Assignment controls' : 'Assignment controls'}</h4>
           {canManageAssignments ? (
-            <form className="panel-form" onSubmit={(event) => void onCreateParticipantRun(event)}>
-            <label>
-              Assign from roster
-              <select
-                value={participantAssignmentForm.rosterMemberId ?? ''}
-                onChange={(event) => {
-                  const nextMember =
-                    rosterMembers.find((member) => member.id === event.target.value) ?? null;
-                  onParticipantAssignmentFormChange((current) => ({
-                    ...current,
-                    launchId: launch.id,
-                    rosterMemberId: nextMember?.id ?? null,
-                    participantName: nextMember ? nextMember.fullName : '',
-                    participantEmail: nextMember?.email ?? null,
-                    participantRole: nextMember ? nextMember.roleTitle : '',
-                    participantTeam: nextMember?.team ?? null,
-                  }));
-                }}
-              >
-                <option value="">Ad hoc assignment</option>
-                {rosterMembers
-                  .filter((member) => member.status === 'active')
-                  .map((member) => (
-                    <option key={member.id} value={member.id}>
-                      {member.fullName} · {member.roleTitle}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            {selectedRosterMember ? (
-              <div className="detail-card compact-detail-card">
-                <span className="summary-label">Roster snapshot</span>
-                <p>
-                  {selectedRosterMember.email}
-                  {' · '}
-                  {selectedRosterMember.team}
-                  {selectedRosterMember.managerName ? ` · Manager: ${selectedRosterMember.managerName}` : ''}
-                </p>
-              </div>
-            ) : null}
-            <label>
-              Name
-              <input
-                value={participantAssignmentForm.participantName}
-                onChange={(event) =>
-                  onParticipantAssignmentFormChange((current) => ({
-                    ...current,
-                    launchId: launch.id,
-                    participantName: event.target.value,
-                  }))
-                }
-                placeholder={launch.mode === 'tabletop' ? 'Morgan Avery' : 'Jordan Lee'}
-                disabled={Boolean(selectedRosterMember)}
-              />
-            </label>
-            <label>
-              Role
-              <input
-                value={participantAssignmentForm.participantRole}
-                onChange={(event) =>
-                  onParticipantAssignmentFormChange((current) => ({
-                    ...current,
-                    launchId: launch.id,
-                    participantRole: event.target.value,
-                  }))
-                }
-                placeholder={launch.mode === 'tabletop' ? 'Chief Operating Officer' : 'Compliance Officer'}
-                disabled={Boolean(selectedRosterMember)}
-              />
-            </label>
-            <label>
-              Team
-              <input
-                value={participantAssignmentForm.participantTeam ?? ''}
-                onChange={(event) =>
-                  onParticipantAssignmentFormChange((current) => ({
-                    ...current,
-                    launchId: launch.id,
-                    participantTeam: event.target.value ? event.target.value : null,
-                  }))
-                }
-                placeholder={launch.mode === 'tabletop' ? 'Executive' : 'Operations'}
-                disabled={Boolean(selectedRosterMember)}
-              />
-            </label>
-            <label>
-              Email
-              <input
-                type="email"
-                value={participantAssignmentForm.participantEmail ?? ''}
-                onChange={(event) =>
-                  onParticipantAssignmentFormChange((current) => ({
-                    ...current,
-                    launchId: launch.id,
-                    participantEmail: event.target.value ? event.target.value : null,
-                  }))
-                }
-                placeholder="name@firm.com"
-                disabled={Boolean(selectedRosterMember)}
-              />
-            </label>
-            <label>
-              Due date
-              <input
-                type="date"
-                value={participantAssignmentForm.dueAt ?? ''}
-                onChange={(event) =>
-                  onParticipantAssignmentFormChange((current) => ({
-                    ...current,
-                    launchId: launch.id,
-                    dueAt: event.target.value ? event.target.value : null,
-                  }))
-                }
-              />
-            </label>
-            <button type="submit" className="button-primary button-block">
-              {launch.mode === 'tabletop' ? 'Add seat' : 'Assign participant'}
-            </button>
-            </form>
+            <div className="stack">
+              <form className="panel-form" onSubmit={(event) => void onAssignTeamToLaunch(event)}>
+                <label>
+                  Assign whole team
+                  <select
+                    value={participantTeamAssignmentForm.team}
+                    onChange={(event) =>
+                      onParticipantTeamAssignmentFormChange((current) => ({
+                        ...current,
+                        launchId: launch.id,
+                        team: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Select a team</option>
+                    {assignableTeams.map((team) => (
+                      <option key={team} value={team}>
+                        {team}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Due date
+                  <input
+                    type="date"
+                    value={participantTeamAssignmentForm.dueAt ?? ''}
+                    onChange={(event) =>
+                      onParticipantTeamAssignmentFormChange((current) => ({
+                        ...current,
+                        launchId: launch.id,
+                        dueAt: event.target.value ? event.target.value : null,
+                      }))
+                    }
+                  />
+                </label>
+                <button type="submit" className="button-secondary button-block" disabled={!participantTeamAssignmentForm.team}>
+                  {launch.mode === 'tabletop' ? 'Add leadership team' : 'Assign team'}
+                </button>
+              </form>
+
+              <div className="divider-text">or assign an individual</div>
+
+              <form className="panel-form" onSubmit={(event) => void onCreateParticipantRun(event)}>
+                <label>
+                  Assign from roster
+                  <select
+                    value={participantAssignmentForm.rosterMemberId ?? ''}
+                    onChange={(event) => {
+                      const nextMember =
+                        rosterMembers.find((member) => member.id === event.target.value) ?? null;
+                      onParticipantAssignmentFormChange((current) => ({
+                        ...current,
+                        launchId: launch.id,
+                        rosterMemberId: nextMember?.id ?? null,
+                        participantName: nextMember ? nextMember.fullName : '',
+                        participantEmail: nextMember?.email ?? null,
+                        participantRole: nextMember ? nextMember.roleTitle : '',
+                        participantTeam: nextMember?.team ?? null,
+                      }));
+                    }}
+                  >
+                    <option value="">Ad hoc assignment</option>
+                    {rosterMembers
+                      .filter((member) => member.status === 'active')
+                      .map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.fullName} · {member.roleTitle}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                {selectedRosterMember ? (
+                  <div className="detail-card compact-detail-card">
+                    <span className="summary-label">Roster snapshot</span>
+                    <p>
+                      {selectedRosterMember.email}
+                      {' · '}
+                      {selectedRosterMember.team}
+                      {selectedRosterMember.managerName ? ` · Manager: ${selectedRosterMember.managerName}` : ''}
+                    </p>
+                  </div>
+                ) : null}
+                <label>
+                  Name
+                  <input
+                    value={participantAssignmentForm.participantName}
+                    onChange={(event) =>
+                      onParticipantAssignmentFormChange((current) => ({
+                        ...current,
+                        launchId: launch.id,
+                        participantName: event.target.value,
+                      }))
+                    }
+                    placeholder={launch.mode === 'tabletop' ? 'Morgan Avery' : 'Jordan Lee'}
+                    disabled={Boolean(selectedRosterMember)}
+                  />
+                </label>
+                <label>
+                  Role
+                  <input
+                    value={participantAssignmentForm.participantRole}
+                    onChange={(event) =>
+                      onParticipantAssignmentFormChange((current) => ({
+                        ...current,
+                        launchId: launch.id,
+                        participantRole: event.target.value,
+                      }))
+                    }
+                    placeholder={launch.mode === 'tabletop' ? 'Chief Operating Officer' : 'Compliance Officer'}
+                    disabled={Boolean(selectedRosterMember)}
+                  />
+                </label>
+                <label>
+                  Team
+                  <input
+                    value={participantAssignmentForm.participantTeam ?? ''}
+                    onChange={(event) =>
+                      onParticipantAssignmentFormChange((current) => ({
+                        ...current,
+                        launchId: launch.id,
+                        participantTeam: event.target.value ? event.target.value : null,
+                      }))
+                    }
+                    placeholder={launch.mode === 'tabletop' ? 'Executive' : 'Operations'}
+                    disabled={Boolean(selectedRosterMember)}
+                  />
+                </label>
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    value={participantAssignmentForm.participantEmail ?? ''}
+                    onChange={(event) =>
+                      onParticipantAssignmentFormChange((current) => ({
+                        ...current,
+                        launchId: launch.id,
+                        participantEmail: event.target.value ? event.target.value : null,
+                      }))
+                    }
+                    placeholder="name@firm.com"
+                    disabled={Boolean(selectedRosterMember)}
+                  />
+                </label>
+                <label>
+                  Due date
+                  <input
+                    type="date"
+                    value={participantAssignmentForm.dueAt ?? ''}
+                    onChange={(event) =>
+                      onParticipantAssignmentFormChange((current) => ({
+                        ...current,
+                        launchId: launch.id,
+                        dueAt: event.target.value ? event.target.value : null,
+                      }))
+                    }
+                  />
+                </label>
+                <button type="submit" className="button-primary button-block">
+                  {launch.mode === 'tabletop' ? 'Add seat' : 'Assign participant'}
+                </button>
+              </form>
+            </div>
           ) : (
-            <div className="empty-state">Only admins can create or reassign participant runs in this slice.</div>
+            <div className="empty-state">Your current role can review the launch, but assignment changes remain outside your scope.</div>
           )}
         </div>
       </div>
@@ -2701,36 +4578,52 @@ function LaunchDetailPanel({
 }
 
 function ReportsPanel({
+  currentUser,
   reports,
   selectedReportId,
   onSelectReport,
   activeReportDetail,
   exportBusy,
   onExportReport,
+  reportCloseoutForm,
+  onReportCloseoutFormChange,
+  onUpdateReportCloseout,
 }: {
+  currentUser: WorkspaceUser;
   reports: ReportSummary[];
   selectedReportId: string | null;
   onSelectReport: (launchId: string) => void;
   activeReportDetail: ReportDetail | null;
   exportBusy: boolean;
   onExportReport: (launchId: string, format: ReportExportFormat) => void;
+  reportCloseoutForm: ReportCloseoutForm;
+  onReportCloseoutFormChange: Dispatch<SetStateAction<ReportCloseoutForm>>;
+  onUpdateReportCloseout: (launchId: string, markClosed: boolean) => void;
 }) {
   return (
     <section className="panel-grid">
       <div className="panel">
         <div className="panel-header">
           <div>
-            <h3>Exercise reports</h3>
-            <p>Report summaries now represent real participant completion, score, and evidence status.</p>
+            <h3>Evidence queue</h3>
+            <p>Review after-actions, completion posture, score trends, and export-ready evidence packages by exercise.</p>
           </div>
         </div>
         <ReportTable reports={reports} activeId={selectedReportId} onSelect={onSelectReport} />
       </div>
 
       <div className="panel side-panel">
-        <h3>Report detail</h3>
+        <h3>Evidence detail</h3>
         {activeReportDetail ? (
-          <ReportDetailPanel report={activeReportDetail} exportBusy={exportBusy} onExportReport={onExportReport} />
+          <ReportDetailPanel
+            currentUser={currentUser}
+            report={activeReportDetail}
+            exportBusy={exportBusy}
+            onExportReport={onExportReport}
+            closeoutForm={reportCloseoutForm}
+            onCloseoutFormChange={onReportCloseoutFormChange}
+            onUpdateReportCloseout={onUpdateReportCloseout}
+          />
         ) : (
           <div className="empty-state">Select a report to review the latest evidence and participant findings.</div>
         )}
@@ -2739,15 +4632,119 @@ function ReportsPanel({
   );
 }
 
+function EvidencePanel({
+  currentUser,
+  reports,
+  selectedReportId,
+  onSelectReport,
+  activeReportDetail,
+  exportBusy,
+  onExportReport,
+  reportCloseoutForm,
+  onReportCloseoutFormChange,
+  onUpdateReportCloseout,
+}: {
+  currentUser: WorkspaceUser;
+  reports: ReportSummary[];
+  selectedReportId: string | null;
+  onSelectReport: (launchId: string) => void;
+  activeReportDetail: ReportDetail | null;
+  exportBusy: boolean;
+  onExportReport: (launchId: string, format: ReportExportFormat) => void;
+  reportCloseoutForm: ReportCloseoutForm;
+  onReportCloseoutFormChange: Dispatch<SetStateAction<ReportCloseoutForm>>;
+  onUpdateReportCloseout: (launchId: string, markClosed: boolean) => void;
+}) {
+  const readyEvidence = reports.filter((report) => report.evidenceStatus === 'ready' && report.status !== 'closed').length;
+  const inReview = reports.filter((report) => report.status === 'in_review').length;
+  const closedPackages = reports.filter((report) => report.status === 'closed').length;
+  const averageCompletion =
+    reports.length > 0 ? Math.round(reports.reduce((sum, report) => sum + report.completionRate, 0) / reports.length) : 0;
+  const scoredReports = reports.filter((report) => report.averageScore !== null);
+  const averageScore =
+    scoredReports.length > 0
+      ? Math.round(scoredReports.reduce((sum, report) => sum + (report.averageScore ?? 0), 0) / scoredReports.length)
+      : null;
+
+  const evidenceCards: AdminSummaryCard[] = [
+    {
+      id: 'evidence-ready',
+      label: 'Evidence ready',
+      value: String(readyEvidence),
+      note: readyEvidence > 0 ? 'These exercises are ready for review or export.' : 'No evidence packages are ready yet.',
+      tone: readyEvidence > 0 ? 'ready' : 'neutral',
+    },
+    {
+      id: 'evidence-review',
+      label: 'Reports in review',
+      value: String(inReview),
+      note: inReview > 0 ? 'These reports still need operator review.' : 'No reports are currently waiting in review.',
+      tone: inReview > 0 ? 'attention' : 'ready',
+    },
+    {
+      id: 'evidence-closed',
+      label: 'Closed packages',
+      value: String(closedPackages),
+      note: closedPackages > 0 ? 'These evidence packages were reviewed and formally closed.' : 'No evidence packages are closed yet.',
+      tone: closedPackages > 0 ? 'ready' : 'neutral',
+    },
+    {
+      id: 'evidence-completion',
+      label: 'Average completion',
+      value: `${averageCompletion}%`,
+      note: 'Average assigned-run completion across visible exercise reports.',
+      tone: averageCompletion >= 75 ? 'ready' : averageCompletion > 0 ? 'attention' : 'neutral',
+    },
+    {
+      id: 'evidence-score',
+      label: 'Average score',
+      value: averageScore !== null ? `${averageScore}%` : 'N/A',
+      note:
+        averageScore !== null
+          ? 'Average score across reports that already include participant scoring.'
+          : 'Scoring will appear after participants submit required responses.',
+      tone: averageScore !== null && averageScore >= 75 ? 'ready' : averageScore !== null ? 'attention' : 'neutral',
+    },
+  ];
+
+  return (
+    <section className="stack">
+      <SummaryStrip cards={evidenceCards} />
+      <ReportsPanel
+        currentUser={currentUser}
+        reports={reports}
+        selectedReportId={selectedReportId}
+        onSelectReport={onSelectReport}
+        activeReportDetail={activeReportDetail}
+        exportBusy={exportBusy}
+        onExportReport={onExportReport}
+        reportCloseoutForm={reportCloseoutForm}
+        onReportCloseoutFormChange={onReportCloseoutFormChange}
+        onUpdateReportCloseout={onUpdateReportCloseout}
+      />
+    </section>
+  );
+}
+
 function ReportDetailPanel({
+  currentUser,
   report,
   exportBusy,
   onExportReport,
+  closeoutForm,
+  onCloseoutFormChange,
+  onUpdateReportCloseout,
 }: {
+  currentUser: WorkspaceUser;
   report: ReportDetail;
   exportBusy: boolean;
   onExportReport: (launchId: string, format: ReportExportFormat) => void;
+  closeoutForm: ReportCloseoutForm;
+  onCloseoutFormChange: Dispatch<SetStateAction<ReportCloseoutForm>>;
+  onUpdateReportCloseout: (launchId: string, markClosed: boolean) => void;
 }) {
+  const canManageCloseout = currentUser.role === 'admin';
+
   return (
     <div className="stack">
       <div className="stat-grid">
@@ -2766,6 +4763,10 @@ function ReportDetailPanel({
         <article className="stat-card">
           <span className="summary-label">Launch status</span>
           <strong>{report.launchStatus.replace(/_/g, ' ')}</strong>
+        </article>
+        <article className="stat-card">
+          <span className="summary-label">Review status</span>
+          <strong>{report.status.replace(/_/g, ' ')}</strong>
         </article>
       </div>
 
@@ -2803,6 +4804,74 @@ function ReportDetailPanel({
             />
           </div>
         </div>
+      </div>
+
+      <div className="detail-card">
+        <span className="summary-label">Operator closeout</span>
+        {report.closedAt ? (
+          <p>
+            Closed {formatDate(report.closedAt)}
+            {report.closedByName ? ` by ${report.closedByName}` : ''}.
+          </p>
+        ) : (
+          <p>Evidence remains open for operator review and closeout.</p>
+        )}
+        {canManageCloseout ? (
+          <div className="stack compact-stack">
+            <label>
+              Closeout notes
+              <textarea
+                value={closeoutForm.closeoutNotes}
+                onChange={(event) =>
+                  onCloseoutFormChange((current) => ({ ...current, closeoutNotes: event.target.value }))
+                }
+                placeholder="Summarize the operator's conclusion, approval posture, and what should happen next."
+              />
+            </label>
+            <label>
+              Follow-up actions
+              <textarea
+                value={closeoutForm.followUpText}
+                onChange={(event) =>
+                  onCloseoutFormChange((current) => ({ ...current, followUpText: event.target.value }))
+                }
+                placeholder={'One follow-up action per line'}
+              />
+            </label>
+            <div className="button-row">
+              <button
+                type="button"
+                className="button-secondary"
+                disabled={exportBusy}
+                onClick={() => onUpdateReportCloseout(report.launchId, false)}
+              >
+                {report.closedAt ? 'Reopen package' : 'Save notes'}
+              </button>
+              <button
+                type="button"
+                className="button-primary"
+                disabled={exportBusy || report.evidenceStatus !== 'ready'}
+                onClick={() => onUpdateReportCloseout(report.launchId, true)}
+              >
+                {report.closedAt ? 'Save as closed' : 'Close evidence package'}
+              </button>
+            </div>
+            {report.evidenceStatus !== 'ready' ? (
+              <p className="subtle">At least one submitted response is required before the evidence package can be closed.</p>
+            ) : null}
+          </div>
+        ) : (
+          <div className="detail-grid report-detail-grid">
+            <div className="report-section full-width">
+              <strong>Closeout notes</strong>
+              <p className="subtle">{report.closeoutNotes || 'No operator closeout notes recorded yet.'}</p>
+            </div>
+            <div className="report-section full-width">
+              <strong>Follow-up actions</strong>
+              <ListOrEmpty items={report.followUpActions} emptyLabel="No operator follow-up actions recorded yet." />
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="detail-card">
@@ -2961,12 +5030,12 @@ function FacilitatorTabletopPanel({
       <div className="tabletop-layout">
         <div className="stack">
           <div className="panel tabletop-panel">
-            <div className="panel-header">
-              <div>
-                <h3>Session controls</h3>
-                <p>Tabletop launches stay facilitator-owned. Participant runs inform the roster, not the live session state.</p>
-              </div>
+          <div className="panel-header">
+            <div>
+              <h3>Session controls</h3>
+              <p>Control session status, phase progression, and tabletop flow without leaving the live exercise.</p>
             </div>
+          </div>
             <div className="tabletop-control-grid">
               {tabletopStatusOptions.map((status) => (
                 <button
@@ -2997,7 +5066,7 @@ function FacilitatorTabletopPanel({
             <div className="panel-header">
               <div>
                 <h3>Run of show</h3>
-                <p>Each phase stays bounded around a specific facilitator job instead of freeform branching.</p>
+                <p>Move the session forward with a clear run of show tied to the tabletop objective and decision points.</p>
               </div>
             </div>
             <div className="tabletop-sequence">
@@ -3085,7 +5154,7 @@ function FacilitatorTabletopPanel({
           <div className="panel tabletop-sidebar-panel">
             <h3>Evidence posture</h3>
             <ul className="muted-list">
-              <li>Facilitator notes stay separate from deterministic participant scores.</li>
+              <li>Facilitator notes stay separate from participant scoring and completion records.</li>
               <li>Phase and status changes remain operator-owned and reviewable.</li>
               <li>Any seat-level response still flows into the same launch report and export package.</li>
             </ul>
@@ -3099,6 +5168,7 @@ function FacilitatorTabletopPanel({
 function ParticipantExercisePanel({
   run,
   form,
+  readOnly,
   onFormChange,
   onBack,
   onSaveProgress,
@@ -3106,6 +5176,7 @@ function ParticipantExercisePanel({
 }: {
   run: ParticipantRunDetail;
   form: ParticipantResponseForm;
+  readOnly: boolean;
   onFormChange: Dispatch<SetStateAction<ParticipantResponseForm>>;
   onBack: () => void;
   onSaveProgress: () => void;
@@ -3152,21 +5223,26 @@ function ParticipantExercisePanel({
 
       <div className="participant-layout">
         <div className="stack">
-          <div className="panel participant-workspace">
-            <div className="panel-header">
-              <div>
-                <h3>Action worksheet</h3>
-                <p>Answer the required exercise fields directly from the firm&apos;s procedure, not from memory.</p>
+            <div className="panel participant-workspace">
+              <div className="panel-header">
+                <div>
+                <h3>{readOnly ? 'Run record' : 'Action worksheet'}</h3>
+                <p>
+                  {readOnly
+                    ? 'This view is read-only in the current role. Review the participant response and evidence without editing the run.'
+                    : 'Answer the required exercise fields directly from the firm&apos;s procedure, not from memory.'}
+                </p>
+                </div>
               </div>
-            </div>
             <div className="participant-callout">
-              Deterministic scoring only checks the four required exercise fields. After-action notes remain narrative evidence.
+              Your response is scored only against the required exercise fields. Notes stay separate as after-action evidence.
             </div>
             <div className="response-grid">
               <label className="full-width">
                 First action
                 <textarea
                   value={form.firstAction}
+                  disabled={readOnly}
                   onChange={(event) => onFormChange((current) => ({ ...current, firstAction: event.target.value }))}
                   placeholder="State the first required action under the controlling procedure."
                 />
@@ -3175,6 +5251,7 @@ function ParticipantExercisePanel({
                 Escalation owner
                 <input
                   value={form.escalationChoice}
+                  disabled={readOnly}
                   onChange={(event) => onFormChange((current) => ({ ...current, escalationChoice: event.target.value }))}
                   placeholder="Incident Commander"
                 />
@@ -3183,6 +5260,7 @@ function ParticipantExercisePanel({
                 Impact assessment
                 <input
                   value={form.impactAssessment}
+                  disabled={readOnly}
                   onChange={(event) => onFormChange((current) => ({ ...current, impactAssessment: event.target.value }))}
                   placeholder="Who is impacted first?"
                 />
@@ -3191,6 +5269,7 @@ function ParticipantExercisePanel({
                 After-action note
                 <textarea
                   value={form.notes}
+                  disabled={readOnly}
                   onChange={(event) => onFormChange((current) => ({ ...current, notes: event.target.value }))}
                   placeholder="Record anything unclear, missing, or slow in the current policy path."
                 />
@@ -3198,6 +5277,7 @@ function ParticipantExercisePanel({
               <label className="checkbox-inline">
                 <input
                   type="checkbox"
+                  disabled={readOnly}
                   checked={form.policyAcknowledged}
                   onChange={(event) =>
                     onFormChange((current) => ({ ...current, policyAcknowledged: event.target.checked }))
@@ -3207,14 +5287,18 @@ function ParticipantExercisePanel({
               </label>
             </div>
 
-            <div className="button-row">
-              <button type="button" className="button-secondary" onClick={onSaveProgress}>
-                Save progress
-              </button>
-              <button type="button" className="button-primary" onClick={onSubmitResponse}>
-                Submit response
-              </button>
-            </div>
+            {readOnly ? (
+              <div className="participant-callout">This run is read-only in the current role. Changes must come from the assigned user or an admin.</div>
+            ) : (
+              <div className="button-row">
+                <button type="button" className="button-secondary" onClick={onSaveProgress}>
+                  Save progress
+                </button>
+                <button type="button" className="button-primary" onClick={onSubmitResponse}>
+                  Submit response
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -3223,7 +5307,7 @@ function ParticipantExercisePanel({
             <div className="panel-header">
               <div>
                 <h3>Exercise brief</h3>
-                <p>Keep the bounded prompt, timing, and policy context visible while responding.</p>
+                <p>Keep the scenario context, timing, and learning objective visible while you work through the exercise.</p>
               </div>
             </div>
             <div className="key-value-list">
@@ -3245,8 +5329,8 @@ function ParticipantExercisePanel({
           <div className="panel participant-side-panel">
             <div className="panel-header">
               <div>
-                <h3>Deterministic checkpoints</h3>
-                <p>The score is not model-owned. It only reflects completion of the required response fields.</p>
+                <h3>Required checkpoints</h3>
+                <p>Your score reflects completion of the required response fields, not open-ended narrative quality.</p>
               </div>
             </div>
             <div className="checkpoint-list">
@@ -3266,8 +5350,8 @@ function ParticipantExercisePanel({
             <h3>Evidence output</h3>
             <ul className="muted-list">
               <li>Your submission becomes part of the launch report and evidence checklist.</li>
-              <li>After-action notes are kept separate from the deterministic checkpoint score.</li>
-              <li>This is intentionally bounded. There is no open-ended simulation branch in v1.</li>
+              <li>After-action notes are kept separate from the required checkpoint score.</li>
+              <li>This exercise stays structured so results remain comparable across participants and launches.</li>
             </ul>
           </div>
         </div>
@@ -3282,8 +5366,8 @@ function SettingsPanel() {
       <div className="panel">
         <div className="panel-header">
           <div>
-            <h3>Product guardrails</h3>
-            <p>The admin product should stay explicit about what the model can influence and what it cannot.</p>
+            <h3>Program standards</h3>
+            <p>Keep approval, evidence, and customer-material handling explicit.</p>
           </div>
         </div>
         <div className="key-value-list">
@@ -3307,13 +5391,12 @@ function SettingsPanel() {
       </div>
 
       <div className="panel side-panel">
-        <h3>Architecture chosen</h3>
+        <h3>Admin controls</h3>
         <ul className="muted-list">
-          <li>React + Vite web app</li>
-          <li>Cloudflare Worker API with D1-backed persistence</li>
-          <li>Shared TypeScript contracts package</li>
-          <li>D1 stores structured app data and source metadata</li>
-          <li>R2-backed source upload is now supported when the bucket binding is configured</li>
+          <li>Review materials before they shape live exercises.</li>
+          <li>Control who can access the workspace and which teams managers can oversee.</li>
+          <li>Approve launches and close evidence packages when review is complete.</li>
+          <li>Keep access changes, launch changes, and exports traceable for audit.</li>
         </ul>
       </div>
     </section>
@@ -3451,6 +5534,56 @@ function makeDefaultRosterMemberInput(): RosterMemberInput {
   };
 }
 
+function makeDefaultWorkspaceUserInput(): WorkspaceAccessForm {
+  return {
+    fullName: '',
+    email: '',
+    role: 'user',
+    capabilities: [],
+    scopeTeams: [],
+    rosterMemberId: null,
+    status: 'active',
+  };
+}
+
+function makeDefaultWorkspaceInviteInput(): WorkspaceInviteForm {
+  return {
+    fullName: '',
+    email: '',
+    role: 'user',
+    capabilities: [],
+    scopeTeams: [],
+    rosterMemberId: null,
+  };
+}
+
+function makeWorkspaceUserForm(user: WorkspaceUser): WorkspaceAccessForm {
+  return {
+    fullName: user.fullName,
+    email: user.email,
+    role: user.role,
+    capabilities: user.capabilities,
+    scopeTeams: user.scopeTeams,
+    rosterMemberId: user.rosterMemberId,
+    status: user.status,
+  };
+}
+
+function makeDefaultTeamAssignmentInput(): TeamAssignmentForm {
+  return {
+    launchId: '',
+    team: '',
+    dueAt: null,
+  };
+}
+
+function makeDefaultReportCloseoutForm(): ReportCloseoutForm {
+  return {
+    closeoutNotes: '',
+    followUpText: '',
+  };
+}
+
 function mapRosterMemberToInput(member: RosterMember): RosterMemberInput {
   return {
     fullName: member.fullName,
@@ -3476,8 +5609,73 @@ function formatTabletopPhaseLabel(value: TabletopPhase | null | undefined): stri
   return value.replace(/_/g, ' ');
 }
 
+function formatScenarioApprovalStatusLabel(value: ScenarioDraft['approvalStatus']): string {
+  if (value === 'changes_requested') return 'Changes requested';
+  if (value === 'ready_for_review') return 'Ready for review';
+  return value.replace(/_/g, ' ');
+}
+
+function canWriteParticipantRun(
+  user: WorkspaceUser,
+  run: Pick<ParticipantRun, 'rosterMemberId'>,
+): boolean {
+  if (user.role === 'admin') return true;
+  return user.role === 'user' && Boolean(user.rosterMemberId) && user.rosterMemberId === run.rosterMemberId;
+}
+
+function formatWorkspaceRoleLabel(role: WorkspaceUser['role']): string {
+  if (role === 'admin') return 'Admin';
+  if (role === 'manager') return 'Manager';
+  return 'User';
+}
+
+function formatWorkspaceScopeLabel(
+  role: WorkspaceUser['role'],
+  scopeTeams: string[],
+  fallbackTeam: string | null,
+): string {
+  if (role === 'admin') return 'Workspace-wide';
+  if (role === 'user') return fallbackTeam ? `${fallbackTeam} (linked roster)` : 'Assigned via roster';
+  if (scopeTeams.length > 0) return scopeTeams.join(', ');
+  if (fallbackTeam) return `${fallbackTeam} (linked roster)`;
+  return 'No team scope';
+}
+
+function formatInviteMagicLinkState(invite: WorkspaceInvite): string {
+  if (invite.status !== 'pending') return 'Not active';
+  if (!invite.magicLinkSentAt || !invite.magicLinkExpiresAt) return 'Not sent';
+  if (invite.magicLinkExpiresAt < new Date().toISOString()) {
+    return `Expired ${formatDate(invite.magicLinkExpiresAt)}`;
+  }
+  return `Sent ${formatDate(invite.magicLinkSentAt)} · expires ${formatDate(invite.magicLinkExpiresAt)}`;
+}
+
+function formatWorkspaceCapabilityLabel(capability: WorkspaceUserCapability): string {
+  if (capability === 'resilience_tabletop_facilitate') return 'Tabletop facilitate';
+  return capability;
+}
+
+function hasWorkspaceCapability(user: WorkspaceUser, capability: WorkspaceUserCapability): boolean {
+  return user.capabilities.includes(capability);
+}
+
 function stripFileExtension(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '');
+}
+
+function readMagicLinkTokenFromUrl(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('magic_link_token');
+}
+
+function clearMagicLinkTokenFromUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('magic_link_token');
+  window.history.replaceState({}, '', url);
+}
+
+function buildMagicLinkUrl(path: string): string {
+  return new URL(path, window.location.origin).toString();
 }
 
 function formatBucketLabel(bucketId: string): string {
@@ -3488,7 +5686,7 @@ function formatBucketLabel(bucketId: string): string {
 }
 
 function formatStorageBackendLabel(storageBackend: 'inline' | 'r2'): string {
-  return storageBackend === 'r2' ? 'R2 object storage' : 'Inline app storage';
+  return storageBackend === 'r2' ? 'Stored file' : 'Inline text';
 }
 
 function formatExtractionMethodLabel(value: SourceExtractionProvenance['method']): string {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
+  AuditEvent,
   BootstrapPayload,
   ContextItem,
   DocumentSummary,
@@ -11,20 +12,147 @@ import type {
   ScenarioDraft,
   SourceDocumentDetail,
   SourceExtractionSuggestion,
+  WorkspaceInvite,
   WorkspaceUser,
 } from '@resilience/shared';
 import { createApp } from '../app';
 import { MemoryResilienceStore } from '../store';
 
+const adminHeaders = { 'X-Resilience-User-Id': 'user_dana_admin' };
+const adminJsonHeaders = {
+  'Content-Type': 'application/json',
+  'X-Resilience-User-Id': 'user_dana_admin',
+};
+const managerHeaders = { 'X-Resilience-User-Id': 'user_kim_manager' };
+const managerJsonHeaders = {
+  'Content-Type': 'application/json',
+  'X-Resilience-User-Id': 'user_kim_manager',
+};
+
 describe('Altira Resilience API', () => {
+  it('requires sign-in for bootstrap when no session or debug override is present', async () => {
+    const app = createApp(new MemoryResilienceStore());
+    const response = await app.request('/api/v1/bootstrap', {}, { APP_STAGE: 'production' } as never);
+    const payload = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(401);
+    expect(payload.error).toContain('Sign in');
+  });
+
+  it('creates and reports a workspace email session', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const signInResponse = await app.request('/api/v1/auth/sign-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'dana.smith@altira-demo.local' }),
+    });
+    const signInPayload = (await signInResponse.json()) as { authenticated: boolean; currentUser: WorkspaceUser | null };
+
+    expect(signInResponse.status).toBe(201);
+    expect(signInPayload.authenticated).toBe(true);
+    expect(signInPayload.currentUser?.role).toBe('admin');
+    expect(signInResponse.headers.get('set-cookie')).toContain('altira_resilience_session=');
+
+    const cookie = signInResponse.headers.get('set-cookie');
+    const sessionResponse = await app.request('/api/v1/auth/session', {
+      headers: cookie ? { Cookie: cookie } : undefined,
+    });
+    const sessionPayload = (await sessionResponse.json()) as { authenticated: boolean; currentUser: WorkspaceUser | null };
+
+    expect(sessionResponse.status).toBe(200);
+    expect(sessionPayload.authenticated).toBe(true);
+    expect(sessionPayload.currentUser?.email).toBe('dana.smith@altira-demo.local');
+  });
+
+  it('requires a pending invite to be activated through a magic link instead of plain email sign-in', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const inviteResponse = await app.request('/api/v1/workspace-invites', {
+      method: 'POST',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({
+        email: 'new.ops.lead@altira-demo.local',
+        fullName: 'New Ops Lead',
+        role: 'manager',
+        capabilities: ['resilience_tabletop_facilitate'],
+        scopeTeams: ['Operations'],
+        rosterMemberId: null,
+      }),
+    });
+    const invitePayload = (await inviteResponse.json()) as { workspaceInvite: WorkspaceInvite };
+
+    expect(inviteResponse.status).toBe(201);
+    expect(invitePayload.workspaceInvite.status).toBe('pending');
+
+    const signInResponse = await app.request('/api/v1/auth/sign-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'new.ops.lead@altira-demo.local' }),
+    });
+    const signInPayload = (await signInResponse.json()) as { error: string };
+
+    expect(signInResponse.status).toBe(401);
+    expect(signInPayload.error).toContain('magic link');
+
+    const sendLinkResponse = await app.request(`/api/v1/workspace-invites/${invitePayload.workspaceInvite.id}/send`, {
+      method: 'POST',
+      headers: adminHeaders,
+    });
+    const sendLinkPayload = (await sendLinkResponse.json()) as {
+      workspaceInvite: WorkspaceInvite;
+      magicLinkPath: string;
+      expiresAt: string;
+      deliveryMode: 'manual_copy';
+    };
+
+    expect(sendLinkResponse.status).toBe(201);
+    expect(sendLinkPayload.workspaceInvite.magicLinkSentAt).not.toBeNull();
+    expect(sendLinkPayload.deliveryMode).toBe('manual_copy');
+
+    const magicLinkUrl = new URL(`http://localhost${sendLinkPayload.magicLinkPath}`);
+    const token = magicLinkUrl.searchParams.get('magic_link_token');
+
+    expect(token).toBeTruthy();
+
+    const consumeResponse = await app.request('/api/v1/auth/magic-link/consume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    const consumePayload = (await consumeResponse.json()) as { authenticated: boolean; currentUser: WorkspaceUser | null };
+
+    expect(consumeResponse.status).toBe(201);
+    expect(consumePayload.authenticated).toBe(true);
+    expect(consumePayload.currentUser?.email).toBe('new.ops.lead@altira-demo.local');
+    expect(consumePayload.currentUser?.role).toBe('manager');
+    expect(consumePayload.currentUser?.capabilities).toEqual(['resilience_tabletop_facilitate']);
+    expect(consumePayload.currentUser?.scopeTeams).toEqual(['Operations']);
+  });
+
   it('returns seeded bootstrap data with launches, reports, and stored source documents', async () => {
     const app = createApp(new MemoryResilienceStore());
-    const response = await app.request('/api/v1/bootstrap');
+    const response = await app.request('/api/v1/bootstrap', { headers: adminHeaders });
     const payload = (await response.json()) as BootstrapPayload;
 
     expect(response.status).toBe(200);
     expect(payload.currentUser.role).toBe('admin');
+    expect(payload.nav.map((item) => item.label)).toEqual([
+      'Overview',
+      'Exercises',
+      'Evidence',
+      'People',
+      'Materials',
+      'Settings',
+    ]);
+    expect(payload.overview.programHealth.length).toBeGreaterThan(0);
+    expect(payload.overview.pendingApprovals.length).toBeGreaterThan(0);
     expect(payload.availableUsers.length).toBeGreaterThan(0);
+    expect(payload.auditEvents.length).toBeGreaterThan(0);
+    expect(payload.availableUsers.find((user) => user.id === 'user_morgan_facilitator')?.capabilities).toEqual([
+      'resilience_tabletop_facilitate',
+    ]);
+    expect(payload.workspaceInvites.length).toBeGreaterThan(0);
     expect(payload.sourceLibrary.length).toBeGreaterThan(0);
     expect(payload.sourceLibrary.some((document) => document.storageStatus === 'stored')).toBe(true);
     expect(payload.organizationContext.length).toBeGreaterThan(0);
@@ -35,6 +163,95 @@ describe('Altira Resilience API', () => {
     expect(payload.reports.length).toBeGreaterThan(0);
   });
 
+  it('filters validation and smoke-test source records from scaffold bootstrap payloads', async () => {
+    const documents: DocumentSummary[] = [
+      {
+        id: 'doc_customer_continuity',
+        name: 'Business Continuity Plan',
+        type: 'Continuity Plan',
+        businessUnit: 'Operations',
+        owner: 'Dana Smith',
+        effectiveDate: '2026-03-01',
+        parseStatus: 'needs_review',
+        storageStatus: 'stored',
+        storageBackend: 'inline',
+        uploadedFileName: 'business-continuity-plan.md',
+        byteSize: 420,
+        extractionStatus: 'ready_for_review',
+        pendingSuggestionCount: 2,
+        updatedAt: '2026-03-01T10:00:00.000Z',
+      },
+      {
+        id: 'doc_validation_noise',
+        name: 'Resume Scanned Validation',
+        type: 'Continuity Plan',
+        businessUnit: 'Operations',
+        owner: 'Codex Validation',
+        effectiveDate: '2026-03-13',
+        parseStatus: 'needs_review',
+        storageStatus: 'stored',
+        storageBackend: 'r2',
+        uploadedFileName: 'resume-scanned.pdf',
+        byteSize: 143161,
+        extractionStatus: 'ready_for_review',
+        pendingSuggestionCount: 7,
+        updatedAt: '2026-03-13T15:19:06.337Z',
+      },
+    ];
+
+    const app = createApp(new MemoryResilienceStore({ documents, scenarioDrafts: [] }));
+    const response = await app.request('/api/v1/bootstrap', { headers: adminHeaders });
+    const payload = (await response.json()) as BootstrapPayload;
+
+    expect(response.status).toBe(200);
+    expect(payload.sourceLibrary.map((document) => document.name)).toEqual(['Business Continuity Plan']);
+    expect(payload.overview.pendingApprovals.map((item) => item.title)).toEqual(['Business Continuity Plan']);
+  });
+
+  it('requires reviewer notes before a draft can be sent back with changes requested', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const response = await app.request('/api/v1/scenario-drafts/draft_vendor_tabletop', {
+      method: 'PATCH',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({ approvalStatus: 'changes_requested', reviewerNotes: '   ' }),
+    });
+    const payload = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(payload.error).toContain('reviewer notes');
+  });
+
+  it('records draft review metadata, audit activity, and overview blocking when changes are requested', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const reviewResponse = await app.request('/api/v1/scenario-drafts/draft_vendor_tabletop', {
+      method: 'PATCH',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({
+        approvalStatus: 'changes_requested',
+        reviewerNotes: 'Add the first 30 minute communications owner handoff before launch.',
+      }),
+    });
+    const reviewPayload = (await reviewResponse.json()) as { draft: ScenarioDraft };
+
+    expect(reviewResponse.status).toBe(200);
+    expect(reviewPayload.draft.approvalStatus).toBe('changes_requested');
+    expect(reviewPayload.draft.reviewerNotes).toContain('communications owner handoff');
+    expect(reviewPayload.draft.reviewedByName).toBe('Dana Smith');
+    expect(reviewPayload.draft.reviewedAt).toBeTruthy();
+
+    const bootstrapResponse = await app.request('/api/v1/bootstrap', { headers: adminHeaders });
+    const bootstrapPayload = (await bootstrapResponse.json()) as BootstrapPayload;
+
+    expect(bootstrapResponse.status).toBe(200);
+    expect(bootstrapPayload.overview.pendingApprovals.some((item) => item.title === 'Core Vendor Outage Tabletop')).toBe(true);
+    expect(
+      bootstrapPayload.overview.pendingApprovals.find((item) => item.title === 'Core Vendor Outage Tabletop')?.statusLabel,
+    ).toBe('Changes requested');
+    expect(bootstrapPayload.auditEvents[0]?.action).toBe('scenario_draft_changes_requested');
+  });
+
   it('limits participant bootstrap access to their own assignments', async () => {
     const app = createApp(new MemoryResilienceStore());
     const response = await app.request('/api/v1/bootstrap', {
@@ -43,15 +260,103 @@ describe('Altira Resilience API', () => {
     const payload = (await response.json()) as BootstrapPayload;
 
     expect(response.status).toBe(200);
-    expect(payload.currentUser.role).toBe('participant');
+    expect(payload.currentUser.role).toBe('user');
+    expect(payload.currentUser.capabilities).toEqual([]);
     expect(payload.nav.map((item) => item.id)).toEqual(['home']);
+    expect(payload.nav.map((item) => item.label)).toEqual(['Overview']);
     expect(payload.sourceLibrary).toHaveLength(0);
     expect(payload.reports).toHaveLength(0);
+    expect(payload.auditEvents).toHaveLength(0);
+    expect(payload.overview.programHealth).toHaveLength(0);
     expect(payload.participantAssignments).toHaveLength(1);
     expect(payload.participantAssignments[0]?.rosterMemberId).toBe('roster_jordan_lee');
   });
 
-  it('blocks participant access to admin-only workflows but allows their own run updates', async () => {
+  it('limits managers to scoped teams while allowing team-based assignment inside that scope', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const bootstrapResponse = await app.request('/api/v1/bootstrap', {
+      headers: managerHeaders,
+    });
+    const bootstrapPayload = (await bootstrapResponse.json()) as BootstrapPayload;
+
+    expect(bootstrapResponse.status).toBe(200);
+    expect(bootstrapPayload.currentUser.role).toBe('manager');
+    expect(bootstrapPayload.currentUser.scopeTeams).toEqual(['Operations']);
+    expect(bootstrapPayload.nav.map((item) => item.id)).toEqual(['home', 'launches', 'reports', 'roster']);
+    expect(bootstrapPayload.rosterMembers.map((member) => member.team)).toEqual(['Operations']);
+    expect(bootstrapPayload.availableUsers.map((user) => user.id)).toEqual(['user_kim_manager']);
+    expect(bootstrapPayload.reports.map((report) => report.id)).toEqual(['launch_q2_cyber_wave1']);
+
+    const forbiddenRunResponse = await app.request('/api/v1/participant-runs/run_vendor_exec_coo', {
+      headers: managerHeaders,
+    });
+    expect(forbiddenRunResponse.status).toBe(403);
+
+    const allowedRunResponse = await app.request('/api/v1/participant-runs/run_kim_ops', {
+      headers: managerHeaders,
+    });
+    expect(allowedRunResponse.status).toBe(200);
+
+    const outOfScopeAssignResponse = await app.request('/api/v1/participant-runs/team-assignments', {
+      method: 'POST',
+      headers: managerJsonHeaders,
+      body: JSON.stringify({
+        launchId: 'launch_vendor_tabletop_exec',
+        team: 'Security',
+        dueAt: '2026-03-27',
+      }),
+    });
+    expect(outOfScopeAssignResponse.status).toBe(403);
+
+    const scopedAssignResponse = await app.request('/api/v1/participant-runs/team-assignments', {
+      method: 'POST',
+      headers: managerJsonHeaders,
+      body: JSON.stringify({
+        launchId: 'launch_vendor_tabletop_exec',
+        team: 'Operations',
+        dueAt: '2026-03-27',
+      }),
+    });
+    const scopedAssignPayload = (await scopedAssignResponse.json()) as {
+      createdRuns: ParticipantRun[];
+      skippedExistingCount: number;
+    };
+
+    expect(scopedAssignResponse.status).toBe(201);
+    expect(scopedAssignPayload.createdRuns).toHaveLength(1);
+    expect(scopedAssignPayload.createdRuns[0]?.participantTeam).toBe('Operations');
+    expect(scopedAssignPayload.skippedExistingCount).toBe(0);
+
+    const reportResponse = await app.request('/api/v1/reports/launch_vendor_tabletop_exec', {
+      headers: managerHeaders,
+    });
+    const reportPayload = (await reportResponse.json()) as { report: ReportDetail };
+
+    expect(reportResponse.status).toBe(200);
+    expect(reportPayload.report.participantRuns).toHaveLength(1);
+    expect(reportPayload.report.participantRuns[0]?.participantTeam).toBe('Operations');
+  });
+
+  it('keeps report closeout admin-only', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const response = await app.request('/api/v1/reports/launch_q2_cyber_wave1/review', {
+      method: 'PATCH',
+      headers: managerJsonHeaders,
+      body: JSON.stringify({
+        closeoutNotes: 'Manager should not be able to close the package.',
+        followUpText: 'Confirm ownership',
+        markClosed: true,
+      }),
+    });
+    const payload = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(403);
+    expect(payload.error).toContain('role');
+  });
+
+  it('blocks user access to admin-only workflows but allows their own run updates', async () => {
     const app = createApp(new MemoryResilienceStore());
 
     const sourceResponse = await app.request('/api/v1/source-documents', {
@@ -91,7 +396,7 @@ describe('Altira Resilience API', () => {
     expect(forbiddenRunResponse.status).toBe(403);
   });
 
-  it('allows facilitator tabletop control but blocks manager patching', async () => {
+  it('allows manager tabletop facilitation only when the capability is present', async () => {
     const app = createApp(new MemoryResilienceStore());
 
     const facilitatorResponse = await app.request('/api/v1/launches/launch_vendor_tabletop_exec', {
@@ -109,6 +414,9 @@ describe('Altira Resilience API', () => {
 
     expect(facilitatorResponse.status).toBe(200);
     expect(facilitatorPayload.launch.tabletopPhase).toBe('injects');
+    expect(
+      facilitatorPayload.launch.id,
+    ).toBe('launch_vendor_tabletop_exec');
 
     const managerResponse = await app.request('/api/v1/launches/launch_vendor_tabletop_exec', {
       method: 'PATCH',
@@ -129,7 +437,7 @@ describe('Altira Resilience API', () => {
 
     const createRosterResponse = await app.request('/api/v1/roster-members', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: adminJsonHeaders,
       body: JSON.stringify({
         fullName: 'Avery Stone',
         email: 'avery.stone@firm.com',
@@ -148,7 +456,7 @@ describe('Altira Resilience API', () => {
       `/api/v1/roster-members/${createRosterPayload.rosterMember.id}`,
       {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminJsonHeaders,
         body: JSON.stringify({
           team: 'Enterprise Resilience',
         }),
@@ -161,7 +469,7 @@ describe('Altira Resilience API', () => {
 
     const assignResponse = await app.request('/api/v1/participant-runs', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: adminJsonHeaders,
       body: JSON.stringify({
         launchId: 'launch_q2_cyber_wave1',
         rosterMemberId: createRosterPayload.rosterMember.id,
@@ -178,11 +486,191 @@ describe('Altira Resilience API', () => {
     expect(assignPayload.run.participantTeam).toBe('Enterprise Resilience');
   });
 
+  it('creates and updates workspace users directly through the admin surface', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const createResponse = await app.request('/api/v1/workspace-users', {
+      method: 'POST',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({
+        fullName: 'Alex Rivera',
+        email: 'alex.rivera@altira-demo.local',
+        role: 'user',
+        capabilities: [],
+        scopeTeams: [],
+        rosterMemberId: null,
+        status: 'active',
+      }),
+    });
+    const createPayload = (await createResponse.json()) as { workspaceUser: WorkspaceUser };
+
+    expect(createResponse.status).toBe(201);
+    expect(createPayload.workspaceUser.email).toBe('alex.rivera@altira-demo.local');
+
+    const updateResponse = await app.request(`/api/v1/workspace-users/${createPayload.workspaceUser.id}`, {
+      method: 'PATCH',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({
+        role: 'manager',
+        capabilities: ['resilience_tabletop_facilitate'],
+        scopeTeams: ['Enterprise Resilience'],
+      }),
+    });
+    const updatePayload = (await updateResponse.json()) as { workspaceUser: WorkspaceUser };
+
+    expect(updateResponse.status).toBe(200);
+    expect(updatePayload.workspaceUser.role).toBe('manager');
+    expect(updatePayload.workspaceUser.capabilities).toEqual(['resilience_tabletop_facilitate']);
+    expect(updatePayload.workspaceUser.scopeTeams).toEqual(['Enterprise Resilience']);
+  });
+
+  it('supports deactivating and reactivating a non-admin workspace user', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const createResponse = await app.request('/api/v1/workspace-users', {
+      method: 'POST',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({
+        fullName: 'Taylor Brooks',
+        email: 'taylor.brooks@altira-demo.local',
+        role: 'user',
+        capabilities: [],
+        scopeTeams: [],
+        rosterMemberId: null,
+        status: 'active',
+      }),
+    });
+    const createPayload = (await createResponse.json()) as { workspaceUser: WorkspaceUser };
+
+    expect(createResponse.status).toBe(201);
+
+    const deactivateResponse = await app.request(`/api/v1/workspace-users/${createPayload.workspaceUser.id}`, {
+      method: 'PATCH',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({ status: 'inactive' }),
+    });
+    const deactivatePayload = (await deactivateResponse.json()) as { workspaceUser: WorkspaceUser };
+
+    expect(deactivateResponse.status).toBe(200);
+    expect(deactivatePayload.workspaceUser.status).toBe('inactive');
+
+    const reactivateResponse = await app.request(`/api/v1/workspace-users/${createPayload.workspaceUser.id}`, {
+      method: 'PATCH',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({ status: 'active' }),
+    });
+    const reactivatePayload = (await reactivateResponse.json()) as { workspaceUser: WorkspaceUser };
+
+    expect(reactivateResponse.status).toBe(200);
+    expect(reactivatePayload.workspaceUser.status).toBe('active');
+  });
+
+  it('prevents the current admin from removing the last active admin in the workspace', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const deactivateResponse = await app.request('/api/v1/workspace-users/user_dana_admin', {
+      method: 'PATCH',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({ status: 'inactive' }),
+    });
+    const deactivatePayload = (await deactivateResponse.json()) as { error: string };
+
+    expect(deactivateResponse.status).toBe(400);
+    expect(deactivatePayload.error).toContain('current session');
+
+    const demoteResponse = await app.request('/api/v1/workspace-users/user_dana_admin', {
+      method: 'PATCH',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({ role: 'manager' }),
+    });
+    const demotePayload = (await demoteResponse.json()) as { error: string };
+
+    expect(demoteResponse.status).toBe(400);
+    expect(demotePayload.error).toContain('admin access');
+  });
+
+  it('allows revoked invites to be reopened when no user exists for that email', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const createResponse = await app.request('/api/v1/workspace-invites', {
+      method: 'POST',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({
+        email: 'reopen.invite@altira-demo.local',
+        fullName: 'Reopen Invite',
+        role: 'manager',
+        capabilities: [],
+        scopeTeams: ['Operations'],
+        rosterMemberId: null,
+      }),
+    });
+    const createPayload = (await createResponse.json()) as { workspaceInvite: WorkspaceInvite };
+
+    expect(createResponse.status).toBe(201);
+    expect(createPayload.workspaceInvite.status).toBe('pending');
+
+    const revokeResponse = await app.request(`/api/v1/workspace-invites/${createPayload.workspaceInvite.id}`, {
+      method: 'PATCH',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({ status: 'revoked' }),
+    });
+    const revokePayload = (await revokeResponse.json()) as { workspaceInvite: WorkspaceInvite };
+
+    expect(revokeResponse.status).toBe(200);
+    expect(revokePayload.workspaceInvite.status).toBe('revoked');
+
+    const reopenResponse = await app.request(`/api/v1/workspace-invites/${createPayload.workspaceInvite.id}`, {
+      method: 'PATCH',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({ status: 'pending' }),
+    });
+    const reopenPayload = (await reopenResponse.json()) as { workspaceInvite: WorkspaceInvite };
+
+    expect(reopenResponse.status).toBe(200);
+    expect(reopenPayload.workspaceInvite.status).toBe('pending');
+    expect(reopenPayload.workspaceInvite.email).toBe('reopen.invite@altira-demo.local');
+  });
+
+  it('records audit events for access changes and returns them to admins', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const createResponse = await app.request('/api/v1/workspace-users', {
+      method: 'POST',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({
+        fullName: 'Audit Target',
+        email: 'audit.target@altira-demo.local',
+        role: 'user',
+        capabilities: [],
+        scopeTeams: [],
+        rosterMemberId: null,
+        status: 'active',
+      }),
+    });
+
+    expect(createResponse.status).toBe(201);
+
+    const auditResponse = await app.request('/api/v1/audit-events?limit=3', {
+      headers: adminHeaders,
+    });
+    const auditPayload = (await auditResponse.json()) as { auditEvents: AuditEvent[] };
+
+    expect(auditResponse.status).toBe(200);
+    expect(auditPayload.auditEvents[0]?.action).toBe('workspace_user_created');
+    expect(auditPayload.auditEvents[0]?.summary).toContain('Audit Target');
+
+    const forbiddenResponse = await app.request('/api/v1/audit-events', {
+      headers: managerHeaders,
+    });
+
+    expect(forbiddenResponse.status).toBe(403);
+  });
+
   it('persists tabletop phase and facilitator notes on a launch', async () => {
     const app = createApp(new MemoryResilienceStore());
     const patchResponse = await app.request('/api/v1/launches/launch_vendor_tabletop_exec', {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: adminJsonHeaders,
       body: JSON.stringify({
         status: 'in_progress',
         tabletopPhase: 'injects',
@@ -196,7 +684,9 @@ describe('Altira Resilience API', () => {
     expect(patchPayload.launch.tabletopPhase).toBe('injects');
     expect(patchPayload.launch.facilitatorNotes).toContain('Communications ownership');
 
-    const detailResponse = await app.request('/api/v1/launches/launch_vendor_tabletop_exec');
+    const detailResponse = await app.request('/api/v1/launches/launch_vendor_tabletop_exec', {
+      headers: adminHeaders,
+    });
     const detailPayload = (await detailResponse.json()) as { launch: Launch };
 
     expect(detailResponse.status).toBe(200);
@@ -235,6 +725,7 @@ Escalation Roles:
 
     const uploadResponse = await app.request('/api/v1/source-documents/upload', {
       method: 'POST',
+      headers: adminHeaders,
       body: formData,
     });
     const uploadPayload = (await uploadResponse.json()) as { document: SourceDocumentDetail };
@@ -246,6 +737,7 @@ Escalation Roles:
     const suggestion = uploadPayload.document.extractionSuggestions[0];
     const applyResponse = await app.request(`/api/v1/source-suggestions/${suggestion.id}/apply`, {
       method: 'POST',
+      headers: adminHeaders,
     });
     const applyPayload = (await applyResponse.json()) as { suggestion: SourceExtractionSuggestion; item: ContextItem | null };
 
@@ -278,6 +770,7 @@ Escalation Roles:
       '/api/v1/source-documents/upload',
       {
         method: 'POST',
+        headers: adminHeaders,
         body: formData,
       },
       { SOURCE_DOCUMENTS_BUCKET: fakeBucket } as never,
@@ -306,6 +799,7 @@ Escalation Roles:
 
     const uploadResponse = await app.request('/api/v1/source-documents/upload', {
       method: 'POST',
+      headers: adminHeaders,
       body: formData,
     });
     const payload = (await uploadResponse.json()) as { error: string };
@@ -334,6 +828,7 @@ Escalation Roles:
       '/api/v1/source-documents/upload',
       {
         method: 'POST',
+        headers: adminHeaders,
         body: formData,
       },
       { SOURCE_DOCUMENTS_BUCKET: fakeBucket } as never,
@@ -369,6 +864,7 @@ Escalation Roles:
       '/api/v1/source-documents/upload',
       {
         method: 'POST',
+        headers: adminHeaders,
         body: formData,
       },
       { SOURCE_DOCUMENTS_BUCKET: fakeBucket, SOURCE_EXTRACTION_QUEUE: fakeQueue } as never,
@@ -403,6 +899,7 @@ Escalation Roles:
       '/api/v1/source-documents/upload',
       {
         method: 'POST',
+        headers: adminHeaders,
         body: formData,
       },
       { SOURCE_DOCUMENTS_BUCKET: fakeBucket, SOURCE_EXTRACTION_QUEUE: fakeQueue } as never,
@@ -438,6 +935,7 @@ Escalation Roles:
       '/api/v1/source-documents/upload',
       {
         method: 'POST',
+        headers: adminHeaders,
         body: formData,
       },
       {
@@ -513,7 +1011,7 @@ Escalation Roles:
 
     const response = await app.request(
       `/api/v1/source-documents/${seedDocument.id}/extract`,
-      { method: 'POST' },
+      { method: 'POST', headers: adminHeaders },
       { SOURCE_DOCUMENTS_BUCKET: fakeBucket } as never,
     );
     const payload = (await response.json()) as { document: SourceDocumentDetail };
@@ -532,7 +1030,7 @@ Escalation Roles:
 
     const launchResponse = await app.request('/api/v1/launches', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: adminJsonHeaders,
       body: JSON.stringify({
         scenarioDraftId: 'draft_q2_cyber',
         startsAt: '2026-03-21',
@@ -546,7 +1044,7 @@ Escalation Roles:
 
     const runResponse = await app.request('/api/v1/participant-runs', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: adminJsonHeaders,
       body: JSON.stringify({
         launchId: launchPayload.launch.id,
         participantName: 'Morgan Bell',
@@ -566,7 +1064,7 @@ Escalation Roles:
 
     const contextResponse = await app.request('/api/v1/context-items/team_security', {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: adminJsonHeaders,
       body: JSON.stringify({ reviewState: 'confirmed' }),
     });
     const contextPayload = (await contextResponse.json()) as { item: ContextItem };
@@ -576,7 +1074,7 @@ Escalation Roles:
 
     const draftResponse = await app.request('/api/v1/scenario-drafts/draft_vendor_tabletop', {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: adminJsonHeaders,
       body: JSON.stringify({ approvalStatus: 'approved' }),
     });
     const draftPayload = (await draftResponse.json()) as { draft: ScenarioDraft };
@@ -586,7 +1084,7 @@ Escalation Roles:
 
     const runResponse = await app.request('/api/v1/participant-runs/run_jordan_compliance', {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: adminJsonHeaders,
       body: JSON.stringify({
         firstAction: 'Notify the incident commander and log the outage against the cyber escalation path.',
         escalationChoice: 'Incident Commander',
@@ -602,7 +1100,9 @@ Escalation Roles:
     expect(runPayload.run.status).toBe('submitted');
     expect(runPayload.run.scorePercent).toBe(100);
 
-    const reportResponse = await app.request('/api/v1/reports/launch_q2_cyber_wave1');
+    const reportResponse = await app.request('/api/v1/reports/launch_q2_cyber_wave1', {
+      headers: adminHeaders,
+    });
     const reportPayload = (await reportResponse.json()) as { report: ReportDetail };
 
     expect(reportResponse.status).toBe(200);
@@ -611,21 +1111,48 @@ Escalation Roles:
     expect(reportPayload.report.afterActionSummary.executiveSummary).toContain('submitted response');
     expect(reportPayload.report.participantRuns.length).toBeGreaterThan(1);
 
-    const markdownExportResponse = await app.request('/api/v1/reports/launch_q2_cyber_wave1/export?format=markdown');
+    const closeoutResponse = await app.request('/api/v1/reports/launch_q2_cyber_wave1/review', {
+      method: 'PATCH',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({
+        closeoutNotes: 'Operator review completed. Close this package and track the vendor escalation handoff update.',
+        followUpText: 'Update the vendor escalation matrix\nConfirm policy wording for after-action note capture',
+        markClosed: true,
+      }),
+    });
+    const closeoutPayload = (await closeoutResponse.json()) as { report: ReportDetail };
+
+    expect(closeoutResponse.status).toBe(200);
+    expect(closeoutPayload.report.status).toBe('closed');
+    expect(closeoutPayload.report.closeoutNotes).toContain('Operator review completed');
+    expect(closeoutPayload.report.followUpActions).toHaveLength(2);
+    expect(closeoutPayload.report.closedByName).toBe('Dana Smith');
+    expect(closeoutPayload.report.closedAt).not.toBeNull();
+
+    const markdownExportResponse = await app.request('/api/v1/reports/launch_q2_cyber_wave1/export?format=markdown', {
+      headers: adminHeaders,
+    });
     const markdownExport = await markdownExportResponse.text();
 
     expect(markdownExportResponse.status).toBe(200);
     expect(markdownExportResponse.headers.get('Content-Type')).toContain('text/markdown');
     expect(markdownExportResponse.headers.get('Content-Disposition')).toContain('after-action.md');
     expect(markdownExport).toContain('# Altira Resilience After-Action Brief');
+    expect(markdownExport).toContain('## Operator Closeout');
+    expect(markdownExport).toContain('Update the vendor escalation matrix');
     expect(markdownExport).toContain('## Participant Evidence');
 
-    const jsonExportResponse = await app.request('/api/v1/reports/launch_q2_cyber_wave1/export?format=json');
+    const jsonExportResponse = await app.request('/api/v1/reports/launch_q2_cyber_wave1/export?format=json', {
+      headers: adminHeaders,
+    });
     const jsonExport = JSON.parse(await jsonExportResponse.text()) as ReportEvidencePackage;
 
     expect(jsonExportResponse.status).toBe(200);
     expect(jsonExportResponse.headers.get('Content-Type')).toContain('application/json');
     expect(jsonExportResponse.headers.get('Content-Disposition')).toContain('evidence-package.json');
+    expect(jsonExport.status).toBe('closed');
+    expect(jsonExport.closeoutNotes).toContain('Operator review completed');
+    expect(jsonExport.followUpActions).toContain('Update the vendor escalation matrix');
     expect(jsonExport.afterActionSummary.recommendedActions.length).toBeGreaterThan(0);
     expect(jsonExport.participantRuns.length).toBe(reportPayload.report.participantRuns.length);
   });

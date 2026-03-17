@@ -1,5 +1,10 @@
 import type {
   AdminSummaryCard,
+  AuditEvent,
+  AuditEventAction,
+  AuditEventCategory,
+  AuditEventTargetType,
+  AuthSession,
   ContextBucket,
   ContextItem,
   ContextItemInput,
@@ -12,6 +17,9 @@ import type {
   LaunchPatch,
   LaunchStatus,
   LaunchSummary,
+  OverviewCoverageGap,
+  OverviewData,
+  OverviewQueueItem,
   ParticipantRun,
   ParticipantRunDetail,
   ParticipantRunInput,
@@ -27,6 +35,7 @@ import type {
   ReportEvidenceItem,
   ReportExportFile,
   ReportExportFormat,
+  ReportStatus,
   ReportSummary,
   ReviewState,
   ScenarioApprovalStatus,
@@ -51,6 +60,13 @@ import type {
   SuggestionStatus,
   TabletopPhase,
   WorkspaceUser,
+  WorkspaceInvite,
+  WorkspaceInviteInput,
+  WorkspaceInvitePatch,
+  WorkspaceInviteStatus,
+  WorkspaceUserInput,
+  WorkspaceUserPatch,
+  WorkspaceUserCapability,
   WorkspaceUserRole,
   WorkspaceUserStatus,
 } from '@resilience/shared';
@@ -86,6 +102,7 @@ export interface ResilienceStore {
   createContextItem(input: ContextItemInput): Promise<ContextItem | null>;
   updateContextItem(id: string, patch: ContextItemPatch): Promise<ContextItem | null>;
   listScenarioDrafts(): Promise<ScenarioDraft[]>;
+  getScenarioDraft(id: string): Promise<ScenarioDraft | null>;
   createScenarioDraft(input: ScenarioDraftInput): Promise<ScenarioDraft>;
   updateScenarioDraft(id: string, patch: ScenarioDraftPatch): Promise<ScenarioDraft | null>;
   listRosterMembers(): Promise<RosterMember[]>;
@@ -94,10 +111,50 @@ export interface ResilienceStore {
   updateRosterMember(id: string, patch: RosterMemberPatch): Promise<RosterMember | null>;
   listWorkspaceUsers(): Promise<WorkspaceUser[]>;
   getWorkspaceUser(id: string): Promise<WorkspaceUser | null>;
+  getWorkspaceUserByEmail(email: string): Promise<WorkspaceUser | null>;
+  createWorkspaceUser(input: WorkspaceUserInput): Promise<WorkspaceUser>;
+  updateWorkspaceUser(id: string, patch: WorkspaceUserPatch): Promise<WorkspaceUser | null>;
+  listWorkspaceInvites(): Promise<WorkspaceInvite[]>;
+  createWorkspaceInvite(input: WorkspaceInviteInput & { invitedByUserId: string | null }): Promise<WorkspaceInvite>;
+  updateWorkspaceInvite(id: string, patch: WorkspaceInvitePatch): Promise<WorkspaceInvite | null>;
+  issueWorkspaceInviteMagicLink(id: string, input: { tokenHash: string; expiresAt: string }): Promise<WorkspaceInvite | null>;
+  getWorkspaceInviteByMagicLinkTokenHash(tokenHash: string): Promise<WorkspaceInvite | null>;
+  getPendingWorkspaceInviteByEmail(email: string): Promise<WorkspaceInvite | null>;
+  acceptWorkspaceInvite(id: string, workspaceUserId: string): Promise<WorkspaceInvite | null>;
+  listAuditEvents(limit?: number): Promise<AuditEvent[]>;
+  createAuditEvent(input: {
+    category: AuditEventCategory;
+    action: AuditEventAction;
+    targetType: AuditEventTargetType;
+    targetId: string;
+    actorUserId: string | null;
+    actorName: string;
+    actorRole: WorkspaceUserRole | 'system';
+    summary: string;
+    detail?: string | null;
+  }): Promise<AuditEvent>;
+  createAuthSession(input: {
+    workspaceUserId: string;
+    tokenHash: string;
+    expiresAt: string;
+  }): Promise<AuthSession>;
+  getAuthSessionByTokenHash(tokenHash: string): Promise<AuthSession | null>;
+  revokeAuthSession(id: string): Promise<void>;
+  touchAuthSession(id: string): Promise<AuthSession | null>;
   listLaunches(): Promise<Launch[]>;
   getLaunch(id: string): Promise<Launch | null>;
   createLaunch(input: LaunchInput): Promise<Launch | null>;
   updateLaunch(id: string, patch: LaunchPatch): Promise<Launch | null>;
+  updateReportReview(
+    launchId: string,
+    input: {
+      closeoutNotes: string;
+      followUpText: string;
+      markClosed: boolean;
+      actorUserId: string;
+      actorName: string;
+    },
+  ): Promise<Launch | null>;
   listParticipantRuns(launchId?: string): Promise<ParticipantRun[]>;
   getParticipantRun(id: string): Promise<ParticipantRun | null>;
   createParticipantRun(input: ParticipantRunInput): Promise<ParticipantRun | null>;
@@ -193,6 +250,10 @@ type ScenarioDraftRow = {
   difficulty: ScenarioDifficulty;
   learningObjectives: string;
   approvalStatus: ScenarioApprovalStatus;
+  reviewerNotes: string | null;
+  reviewedAt: string | null;
+  reviewedByUserId: string | null;
+  reviewedByName: string | null;
   scheduledStartAt: string | null;
   participantsLabel: string | null;
   createdAt: string;
@@ -212,6 +273,11 @@ type LaunchRow = {
   learningObjectives: string;
   tabletopPhase: TabletopPhase | null;
   facilitatorNotes: string;
+  reportCloseoutNotes: string;
+  reportFollowUpText: string;
+  reportClosedAt: string | null;
+  reportClosedByUserId: string | null;
+  reportClosedByName: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -233,10 +299,57 @@ type WorkspaceUserRow = {
   fullName: string;
   email: string;
   role: WorkspaceUserRole;
+  capabilitiesJson: string | null;
+  scopeTeamsJson: string | null;
   rosterMemberId: string | null;
   status: WorkspaceUserStatus;
   createdAt: string;
   updatedAt: string;
+};
+
+type AuthSessionRow = {
+  id: string;
+  workspaceUserId: string;
+  tokenHash: string;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+  lastSeenAt: string;
+  revokedAt: string | null;
+};
+
+type AuditEventRow = {
+  id: string;
+  category: AuditEventCategory;
+  action: AuditEventAction;
+  targetType: AuditEventTargetType;
+  targetId: string;
+  actorUserId: string | null;
+  actorName: string;
+  actorRole: WorkspaceUserRole | 'system';
+  summary: string;
+  detail: string | null;
+  createdAt: string;
+};
+
+type WorkspaceInviteRow = {
+  id: string;
+  email: string;
+  fullName: string;
+  role: WorkspaceUserRole;
+  capabilitiesJson: string | null;
+  scopeTeamsJson: string | null;
+  rosterMemberId: string | null;
+  status: WorkspaceInviteStatus;
+  invitedByUserId: string | null;
+  acceptedWorkspaceUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  acceptedAt: string | null;
+  revokedAt: string | null;
+  magicLinkTokenHash: string | null;
+  magicLinkExpiresAt: string | null;
+  magicLinkSentAt: string | null;
 };
 
 type ParticipantRunRow = {
@@ -303,7 +416,7 @@ export function isScenarioDifficulty(value: unknown): value is ScenarioDifficult
 }
 
 export function isScenarioApprovalStatus(value: unknown): value is ScenarioApprovalStatus {
-  return value === 'draft' || value === 'ready_for_review' || value === 'approved';
+  return value === 'draft' || value === 'ready_for_review' || value === 'changes_requested' || value === 'approved';
 }
 
 export function isLaunchMode(value: unknown): value is 'individual' | 'tabletop' {
@@ -327,11 +440,19 @@ export function isRosterMemberStatus(value: unknown): value is RosterMemberStatu
 }
 
 export function isWorkspaceUserRole(value: unknown): value is WorkspaceUserRole {
-  return value === 'admin' || value === 'facilitator' || value === 'manager' || value === 'participant';
+  return value === 'admin' || value === 'manager' || value === 'user';
+}
+
+export function isWorkspaceUserCapability(value: unknown): value is WorkspaceUserCapability {
+  return value === 'resilience_tabletop_facilitate';
 }
 
 export function isWorkspaceUserStatus(value: unknown): value is WorkspaceUserStatus {
   return value === 'active' || value === 'inactive';
+}
+
+export function isWorkspaceInviteStatus(value: unknown): value is WorkspaceInviteStatus {
+  return value === 'pending' || value === 'accepted' || value === 'revoked';
 }
 
 export function isSuggestionStatus(value: unknown): value is SuggestionStatus {
@@ -492,6 +613,10 @@ export function normalizeScenarioDraftInput(raw: Partial<ScenarioDraftInput>): S
     difficulty,
     learningObjectives,
     approvalStatus,
+    reviewerNotes: normalizeNullableString(raw.reviewerNotes),
+    reviewedAt: normalizeNullableString(raw.reviewedAt),
+    reviewedByUserId: normalizeNullableString(raw.reviewedByUserId),
+    reviewedByName: normalizeNullableString(raw.reviewedByName),
     scheduledStartAt: normalizeNullableString(raw.scheduledStartAt),
     participantsLabel: normalizeNullableString(raw.participantsLabel),
   };
@@ -510,6 +635,18 @@ export function normalizeScenarioDraftPatch(raw: Partial<ScenarioDraftPatch>): S
   if (isScenarioDifficulty(raw.difficulty)) patch.difficulty = raw.difficulty;
   if (learningObjectives) patch.learningObjectives = learningObjectives;
   if (isScenarioApprovalStatus(raw.approvalStatus)) patch.approvalStatus = raw.approvalStatus;
+  if (raw.reviewerNotes === null || typeof raw.reviewerNotes === 'string') {
+    patch.reviewerNotes = normalizeNullableString(raw.reviewerNotes);
+  }
+  if (raw.reviewedAt === null || typeof raw.reviewedAt === 'string') {
+    patch.reviewedAt = normalizeNullableString(raw.reviewedAt);
+  }
+  if (raw.reviewedByUserId === null || typeof raw.reviewedByUserId === 'string') {
+    patch.reviewedByUserId = normalizeNullableString(raw.reviewedByUserId);
+  }
+  if (raw.reviewedByName === null || typeof raw.reviewedByName === 'string') {
+    patch.reviewedByName = normalizeNullableString(raw.reviewedByName);
+  }
   if (raw.scheduledStartAt === null || typeof raw.scheduledStartAt === 'string') {
     patch.scheduledStartAt = normalizeNullableString(raw.scheduledStartAt);
   }
@@ -590,6 +727,78 @@ export function normalizeRosterMemberPatch(raw: Partial<RosterMemberPatch>): Ros
   return patch;
 }
 
+export function normalizeWorkspaceUserInput(raw: Partial<WorkspaceUserInput>): WorkspaceUserInput | null {
+  const fullName = readTrimmedString(raw.fullName);
+  const email = readTrimmedString(raw.email);
+  const role = isWorkspaceUserRole(raw.role) ? raw.role : null;
+  const status = isWorkspaceUserStatus(raw.status) ? raw.status : null;
+  const rosterMemberId = normalizeNullableString(raw.rosterMemberId);
+  const capabilities = normalizeWorkspaceUserCapabilities(raw.capabilities);
+  const scopeTeams = normalizeScopeTeams(raw.scopeTeams);
+
+  if (!fullName || !email || !role || !status) {
+    return null;
+  }
+
+  return {
+    fullName,
+    email,
+    role,
+    capabilities,
+    scopeTeams,
+    rosterMemberId,
+    status,
+  };
+}
+
+export function normalizeWorkspaceUserPatch(raw: Partial<WorkspaceUserPatch>): WorkspaceUserPatch {
+  const patch: WorkspaceUserPatch = {};
+  const fullName = readTrimmedString(raw.fullName);
+  const email = readTrimmedString(raw.email);
+  if (fullName) patch.fullName = fullName;
+  if (email) patch.email = email;
+  if (isWorkspaceUserRole(raw.role)) patch.role = raw.role;
+  if (isWorkspaceUserStatus(raw.status)) patch.status = raw.status;
+  if (raw.rosterMemberId === null || typeof raw.rosterMemberId === 'string') {
+    patch.rosterMemberId = normalizeNullableString(raw.rosterMemberId);
+  }
+  if (Array.isArray(raw.capabilities)) {
+    patch.capabilities = normalizeWorkspaceUserCapabilities(raw.capabilities);
+  }
+  if (Array.isArray(raw.scopeTeams)) {
+    patch.scopeTeams = normalizeScopeTeams(raw.scopeTeams);
+  }
+  return patch;
+}
+
+export function normalizeWorkspaceInviteInput(raw: Partial<WorkspaceInviteInput>): WorkspaceInviteInput | null {
+  const email = readTrimmedString(raw.email);
+  const fullName = readTrimmedString(raw.fullName);
+  const role = isWorkspaceUserRole(raw.role) ? raw.role : null;
+  const rosterMemberId = normalizeNullableString(raw.rosterMemberId);
+  const capabilities = normalizeWorkspaceUserCapabilities(raw.capabilities);
+  const scopeTeams = normalizeScopeTeams(raw.scopeTeams);
+
+  if (!email || !fullName || !role) {
+    return null;
+  }
+
+  return {
+    email,
+    fullName,
+    role,
+    capabilities,
+    scopeTeams,
+    rosterMemberId,
+  };
+}
+
+export function normalizeWorkspaceInvitePatch(raw: Partial<WorkspaceInvitePatch>): WorkspaceInvitePatch {
+  const patch: WorkspaceInvitePatch = {};
+  if (isWorkspaceInviteStatus(raw.status)) patch.status = raw.status;
+  return patch;
+}
+
 export function normalizeParticipantRunInput(raw: Partial<ParticipantRunInput>): ParticipantRunInput | null {
   const launchId = readTrimmedString(raw.launchId);
   const rosterMemberId = normalizeNullableString(raw.rosterMemberId);
@@ -649,60 +858,113 @@ export function normalizeParticipantRunPatch(raw: Partial<ParticipantRunPatch>):
 
 export function buildSummaryCards(
   documents: DocumentSummary[],
-  contextBuckets: ContextBucket[],
   scenarioDrafts: ScenarioDraft[],
   launches: Launch[],
   participantRuns: ParticipantRun[],
 ): AdminSummaryCard[] {
-  const approvedDocuments = documents.filter((document) => document.parseStatus === 'approved').length;
-  const pendingSuggestionCount = documents.reduce((total, document) => total + document.pendingSuggestionCount, 0);
-  const approvedDrafts = scenarioDrafts.filter((draft) => draft.approvalStatus === 'approved').length;
+  const pendingMaterialApprovals = documents.filter(
+    (document) => document.parseStatus === 'needs_review' || document.pendingSuggestionCount > 0,
+  ).length;
+  const pendingDraftApprovals = scenarioDrafts.filter((draft) => draft.approvalStatus === 'ready_for_review').length;
+  const requestedChangesDrafts = scenarioDrafts.filter((draft) => draft.approvalStatus === 'changes_requested').length;
+  const reports = buildReports(launches, participantRuns);
   const activeLaunches = launches.filter((launch) => launch.status === 'scheduled' || launch.status === 'in_progress').length;
-  const submittedRuns = participantRuns.filter((run) => run.status === 'submitted').length;
-  const structuredContextItems = contextBuckets.reduce((total, bucket) => total + bucket.items.length, 0);
+  const overdueAssignments = participantRuns.filter(
+    (run) => Boolean(run.dueAt) && run.status !== 'submitted' && run.dueAt! < todayDate(),
+  ).length;
+  const readyEvidence = reports.filter((report) => report.evidenceStatus === 'ready' && report.status !== 'closed').length;
+  const pendingApprovalSegments = [
+    pendingDraftApprovals > 0 ? `${pendingDraftApprovals} draft review${pendingDraftApprovals === 1 ? '' : 's'}` : null,
+    requestedChangesDrafts > 0
+      ? `${requestedChangesDrafts} requested change${requestedChangesDrafts === 1 ? '' : 's'}`
+      : null,
+    pendingMaterialApprovals > 0
+      ? `${pendingMaterialApprovals} material review${pendingMaterialApprovals === 1 ? '' : 's'}`
+      : null,
+  ].filter((segment): segment is string => Boolean(segment));
 
   return [
     {
-      id: 'approved-sources',
-      label: 'Approved source documents',
-      value: String(approvedDocuments),
+      id: 'active-exercises',
+      label: 'Active exercises',
+      value: String(activeLaunches),
       note:
-        documents.some((document) => document.storageStatus === 'stored')
-          ? 'Stored source files now sit behind reviewable document records before they influence scenarios.'
-          : 'No stored source files yet. Current records are still metadata-only.',
-      tone: approvedDocuments > 0 ? 'ready' : 'neutral',
+        activeLaunches > 0
+          ? `${activeLaunches} launch${activeLaunches === 1 ? '' : 'es'} are currently scheduled or in progress.`
+          : 'No exercises are currently scheduled. Create a draft or launch the next readiness run.',
+      tone: activeLaunches > 0 ? 'ready' : 'neutral',
     },
     {
-      id: 'reviewable-suggestions',
-      label: 'Reviewable source suggestions',
-      value: String(pendingSuggestionCount),
+      id: 'pending-approvals',
+      label: 'Pending approvals',
+      value: String(pendingDraftApprovals + pendingMaterialApprovals + requestedChangesDrafts),
       note:
-        pendingSuggestionCount > 0
-          ? 'Uploaded materials generated suggested teams, vendors, and escalation roles that still need operator review.'
-          : `${structuredContextItems} structured context item${structuredContextItems === 1 ? '' : 's'} currently sit in the approved context library.`,
-      tone: pendingSuggestionCount > 0 ? 'attention' : 'ready',
+        pendingDraftApprovals + pendingMaterialApprovals + requestedChangesDrafts > 0
+          ? `${formatReadableList(pendingApprovalSegments)} ${pendingApprovalSegments.length === 1 ? 'is' : 'are'} waiting on operator action.`
+          : 'No drafts or materials are blocked in review right now.',
+      tone: pendingDraftApprovals + pendingMaterialApprovals + requestedChangesDrafts > 0 ? 'attention' : 'ready',
     },
     {
-      id: 'launch-ready-drafts',
-      label: 'Launch-ready drafts',
-      value: String(approvedDrafts),
+      id: 'overdue-assignments',
+      label: 'Overdue assignments',
+      value: String(overdueAssignments),
       note:
-        approvedDrafts > 0
-          ? `${activeLaunches} launch${activeLaunches === 1 ? '' : 'es'} are already active or scheduled from approved drafts.`
-          : 'No approved drafts yet. Operator approval still gates launch creation.',
-      tone: approvedDrafts > 0 ? 'ready' : 'neutral',
+        overdueAssignments > 0
+          ? `${overdueAssignments} participant assignment${overdueAssignments === 1 ? '' : 's'} are past due without a submitted response.`
+          : 'No participant assignments are currently overdue.',
+      tone: overdueAssignments > 0 ? 'attention' : 'ready',
     },
     {
-      id: 'submitted-participant-runs',
-      label: 'Submitted participant runs',
-      value: String(submittedRuns),
+      id: 'evidence-ready',
+      label: 'Evidence ready',
+      value: String(readyEvidence),
       note:
-        participantRuns.length > 0
-          ? `${submittedRuns} of ${participantRuns.length} assigned runs now contribute to report evidence.`
-          : 'No participant run data yet. Reports stay empty until launches have assignees.',
-      tone: submittedRuns > 0 ? 'ready' : 'neutral',
+        readyEvidence > 0
+          ? `${readyEvidence} evidence package${readyEvidence === 1 ? '' : 's'} are ready for review or export.`
+          : 'No evidence packages are ready yet. Reports will mature as runs are submitted.',
+      tone: readyEvidence > 0 ? 'ready' : 'neutral',
     },
   ];
+}
+
+export function buildOverviewData(
+  documents: DocumentSummary[],
+  scenarioDrafts: ScenarioDraft[],
+  launches: Launch[],
+  participantRuns: ParticipantRun[],
+  rosterMembers: RosterMember[],
+): OverviewData {
+  const launchSummaries = buildLaunches(launches, participantRuns);
+  const reports = buildReports(launches, participantRuns);
+  const pendingApprovals = buildPendingApprovalQueue(documents, scenarioDrafts);
+  const overdueAssignments = participantRuns
+    .filter((run) => Boolean(run.dueAt) && run.status !== 'submitted' && run.dueAt! < todayDate())
+    .slice()
+    .sort(compareParticipantRuns);
+  const upcomingExercises = launchSummaries
+    .filter((launch) => launch.status === 'scheduled' || launch.status === 'in_progress')
+    .slice()
+    .sort(compareLaunchSummariesForOverview)
+    .slice(0, 5);
+  const evidenceReady = reports
+    .filter((report) => report.evidenceStatus === 'ready' && report.status !== 'closed')
+    .slice()
+    .sort((left, right) => right.lastUpdated.localeCompare(left.lastUpdated))
+    .slice(0, 5);
+  const recentAfterActions = reports
+    .slice()
+    .sort((left, right) => right.lastUpdated.localeCompare(left.lastUpdated))
+    .slice(0, 5);
+
+  return {
+    programHealth: buildSummaryCards(documents, scenarioDrafts, launches, participantRuns),
+    pendingApprovals,
+    upcomingExercises,
+    overdueAssignments,
+    evidenceReady,
+    recentAfterActions,
+    coverageGaps: buildCoverageGaps(rosterMembers, participantRuns),
+  };
 }
 
 export function buildLaunches(launches: Launch[], participantRuns: ParticipantRun[]): LaunchSummary[] {
@@ -731,6 +993,152 @@ export function buildLaunches(launches: Launch[], participantRuns: ParticipantRu
     });
 }
 
+function buildPendingApprovalQueue(
+  documents: DocumentSummary[],
+  scenarioDrafts: ScenarioDraft[],
+): OverviewQueueItem[] {
+  const draftItems: OverviewQueueItem[] = scenarioDrafts
+    .filter((draft) => draft.approvalStatus === 'ready_for_review' || draft.approvalStatus === 'changes_requested')
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .map((draft) => ({
+      id: `draft-${draft.id}`,
+      title: draft.title,
+      note:
+        draft.approvalStatus === 'changes_requested'
+          ? `${draft.reviewedByName ?? 'Operator'} requested changes${draft.reviewerNotes ? ` · ${summarizeDraftReviewNote(draft.reviewerNotes)}` : ''}`
+          : `${draft.audience} · ${draft.launchMode === 'tabletop' ? 'Tabletop' : 'Individual'} · updated ${formatShortDate(draft.updatedAt)}`,
+      statusLabel: draft.approvalStatus === 'changes_requested' ? 'Changes requested' : 'Draft review',
+    }));
+
+  const materialItems: OverviewQueueItem[] = documents
+    .filter((document) => document.parseStatus === 'needs_review' || document.pendingSuggestionCount > 0)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .map((document) => ({
+      id: `document-${document.id}`,
+      title: document.name,
+      note:
+        document.pendingSuggestionCount > 0
+          ? `${document.pendingSuggestionCount} reviewable suggestion${document.pendingSuggestionCount === 1 ? '' : 's'} · ${document.owner}`
+          : `Awaiting material review · ${document.owner}`,
+      statusLabel: 'Material review',
+    }));
+
+  return [...draftItems, ...materialItems].slice(0, 6);
+}
+
+function buildCoverageGaps(
+  rosterMembers: RosterMember[],
+  participantRuns: ParticipantRun[],
+): OverviewCoverageGap[] {
+  const activeRosterMembers = rosterMembers.filter((member) => member.status === 'active');
+  const rosterById = new Map(activeRosterMembers.map((member) => [member.id, member]));
+  const teams = new Map<
+    string,
+    { activeMembers: Set<string>; assignedMembers: Set<string>; submittedMembers: Set<string> }
+  >();
+
+  for (const member of activeRosterMembers) {
+    const entry = teams.get(member.team) ?? {
+      activeMembers: new Set<string>(),
+      assignedMembers: new Set<string>(),
+      submittedMembers: new Set<string>(),
+    };
+    entry.activeMembers.add(member.id);
+    teams.set(member.team, entry);
+  }
+
+  for (const run of participantRuns) {
+    const rosterMember = run.rosterMemberId ? rosterById.get(run.rosterMemberId) : null;
+    const team = rosterMember?.team ?? run.participantTeam;
+    if (!team) continue;
+
+    const entry = teams.get(team) ?? {
+      activeMembers: new Set<string>(),
+      assignedMembers: new Set<string>(),
+      submittedMembers: new Set<string>(),
+    };
+    const memberKey = run.rosterMemberId ?? `${team}:${run.participantName}`;
+    entry.assignedMembers.add(memberKey);
+    if (run.status === 'submitted') {
+      entry.submittedMembers.add(memberKey);
+    }
+    teams.set(team, entry);
+  }
+
+  const gaps = Array.from(teams.entries()).map(([team, entry]) => {
+    const activeMembers = entry.activeMembers.size;
+    const assignedMembers = entry.assignedMembers.size;
+    const submittedMembers = entry.submittedMembers.size;
+
+    let note = 'Coverage is current.';
+    if (assignedMembers === 0) {
+      note = 'No active exercise coverage yet.';
+    } else if (submittedMembers === 0) {
+      note = 'Assignments exist, but no evidence has been submitted yet.';
+    } else if (submittedMembers < activeMembers) {
+      note = `${activeMembers - submittedMembers} active team member${activeMembers - submittedMembers === 1 ? '' : 's'} still lack submitted evidence.`;
+    }
+
+    return {
+      team,
+      activeMembers,
+      assignedMembers,
+      submittedMembers,
+      note,
+    } satisfies OverviewCoverageGap;
+  });
+
+  const unresolved = gaps.filter((gap) => gap.assignedMembers === 0 || gap.submittedMembers < gap.activeMembers);
+  return (unresolved.length ? unresolved : gaps)
+    .sort(compareCoverageGaps)
+    .slice(0, 5);
+}
+
+function summarizeDraftReviewNote(note: string): string {
+  return note.length > 96 ? `${note.slice(0, 93).trimEnd()}...` : note;
+}
+
+function formatReadableList(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
+}
+
+function compareCoverageGaps(left: OverviewCoverageGap, right: OverviewCoverageGap): number {
+  return coverageGapRank(left) - coverageGapRank(right) || right.activeMembers - left.activeMembers || left.team.localeCompare(right.team);
+}
+
+function coverageGapRank(gap: OverviewCoverageGap): number {
+  if (gap.assignedMembers === 0) return 0;
+  if (gap.submittedMembers === 0) return 1;
+  if (gap.submittedMembers < gap.activeMembers) return 2;
+  return 3;
+}
+
+function compareLaunchSummariesForOverview(left: LaunchSummary, right: LaunchSummary): number {
+  return launchSummaryRank(left) - launchSummaryRank(right) || compareMaybeDate(left.startsAt, right.startsAt);
+}
+
+function launchSummaryRank(launch: LaunchSummary): number {
+  if (launch.status === 'in_progress') return 0;
+  if (launch.status === 'scheduled') return 1;
+  return 2;
+}
+
+function compareMaybeDate(left: string, right: string): number {
+  const normalizedLeft = /^\d{4}-\d{2}-\d{2}$/.test(left) ? left : '9999-12-31';
+  const normalizedRight = /^\d{4}-\d{2}-\d{2}$/.test(right) ? right : '9999-12-31';
+  return normalizedLeft.localeCompare(normalizedRight);
+}
+
+function formatShortDate(value: string): string {
+  return value.slice(0, 10);
+}
+
+function todayDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export function buildReports(launches: Launch[], participantRuns: ParticipantRun[]): ReportSummary[] {
   const runsByLaunch = groupParticipantRunsByLaunch(participantRuns);
 
@@ -747,7 +1155,7 @@ export function buildReports(launches: Launch[], participantRuns: ParticipantRun
         name: launch.name,
         completionRate: metrics.completionRate,
         averageScore: metrics.averageScore,
-        status: metrics.completionRate === 100 ? 'ready' : 'in_review',
+        status: deriveReportStatus(syncedLaunch, metrics),
         evidenceStatus: metrics.submittedCount > 0 ? 'ready' : 'pending',
         lastUpdated: syncedLaunch.updatedAt,
       } satisfies ReportSummary;
@@ -799,12 +1207,16 @@ export function buildReportDetail(launch: Launch, participantRuns: ParticipantRu
     startsAt: launch.startsAt ?? 'Not scheduled',
     completionRate: metrics.completionRate,
     averageScore: metrics.averageScore,
-    status: metrics.completionRate === 100 ? 'ready' : 'in_review',
+    status: deriveReportStatus(syncedLaunch, metrics),
     evidenceStatus: metrics.submittedCount > 0 ? 'ready' : 'pending',
     learningObjectives: launch.learningObjectives,
     scenarioBrief: launch.scenarioBrief,
     highlights: highlightNotes,
     afterActionSummary,
+    closeoutNotes: launch.reportCloseoutNotes,
+    followUpActions: parseFollowUpActions(launch.reportFollowUpText),
+    closedAt: launch.reportClosedAt,
+    closedByName: launch.reportClosedByName,
     evidenceItems,
     participantRuns: participantRuns.slice().sort(compareParticipantRuns),
   };
@@ -1068,6 +1480,10 @@ const seedScenarioDrafts: ScenarioDraft[] = [
     difficulty: 'medium',
     learningObjectives: 'Validate the first escalation actions, vendor coordination path, and cross-functional communication chain.',
     approvalStatus: 'approved',
+    reviewerNotes: 'Approved for the next operations wave once vendor-contact ownership is confirmed in launch notes.',
+    reviewedAt: '2026-03-06T14:00:00.000Z',
+    reviewedByUserId: 'user_dana_admin',
+    reviewedByName: 'Dana Smith',
     scheduledStartAt: '2026-03-18',
     participantsLabel: '48 assignees',
     createdAt: '2026-03-02T09:00:00.000Z',
@@ -1082,10 +1498,32 @@ const seedScenarioDrafts: ScenarioDraft[] = [
     difficulty: 'high',
     learningObjectives: 'Pressure test executive decisions, comms ownership, and manual-workaround escalation.',
     approvalStatus: 'approved',
+    reviewerNotes: 'Approved for facilitator-led use after executive briefing materials were refreshed.',
+    reviewedAt: '2026-03-08T18:00:00.000Z',
+    reviewedByUserId: 'user_dana_admin',
+    reviewedByName: 'Dana Smith',
     scheduledStartAt: '2026-03-27',
     participantsLabel: '8 leaders',
     createdAt: '2026-03-04T12:00:00.000Z',
     updatedAt: '2026-03-08T18:00:00.000Z',
+  },
+  {
+    id: 'draft_exec_comms_rework',
+    title: 'Executive Communications Escalation Rehearsal',
+    templateId: 'executive-tabletop',
+    audience: 'Executive Team',
+    launchMode: 'tabletop',
+    difficulty: 'high',
+    learningObjectives: 'Confirm who owns executive messaging, customer updates, and regulator escalation when the firm loses a core provider.',
+    approvalStatus: 'changes_requested',
+    reviewerNotes: 'Tighten the first 30 minutes of decision flow and add explicit communications owner handoff before resubmitting.',
+    reviewedAt: '2026-03-15T16:20:00.000Z',
+    reviewedByUserId: 'user_dana_admin',
+    reviewedByName: 'Dana Smith',
+    scheduledStartAt: '2026-04-03',
+    participantsLabel: '7 leaders',
+    createdAt: '2026-03-14T11:00:00.000Z',
+    updatedAt: '2026-03-15T16:20:00.000Z',
   },
 ];
 
@@ -1138,6 +1576,8 @@ const seedWorkspaceUsers: WorkspaceUser[] = [
     fullName: 'Dana Smith',
     email: 'dana.smith@altira-demo.local',
     role: 'admin',
+    capabilities: [],
+    scopeTeams: [],
     rosterMemberId: null,
     status: 'active',
     updatedAt: '2026-03-11T14:30:00.000Z',
@@ -1146,7 +1586,9 @@ const seedWorkspaceUsers: WorkspaceUser[] = [
     id: 'user_morgan_facilitator',
     fullName: 'Morgan Avery',
     email: 'morgan.avery@altira-demo.local',
-    role: 'facilitator',
+    role: 'manager',
+    capabilities: ['resilience_tabletop_facilitate'],
+    scopeTeams: ['Executive', 'Security'],
     rosterMemberId: 'roster_morgan_avery',
     status: 'active',
     updatedAt: '2026-03-11T14:35:00.000Z',
@@ -1156,6 +1598,8 @@ const seedWorkspaceUsers: WorkspaceUser[] = [
     fullName: 'Kim Patel',
     email: 'kim.patel@altira-demo.local',
     role: 'manager',
+    capabilities: [],
+    scopeTeams: ['Operations'],
     rosterMemberId: 'roster_kim_patel',
     status: 'active',
     updatedAt: '2026-03-11T14:40:00.000Z',
@@ -1164,10 +1608,102 @@ const seedWorkspaceUsers: WorkspaceUser[] = [
     id: 'user_jordan_participant',
     fullName: 'Jordan Lee',
     email: 'jordan.lee@altira-demo.local',
-    role: 'participant',
+    role: 'user',
+    capabilities: [],
+    scopeTeams: [],
     rosterMemberId: 'roster_jordan_lee',
     status: 'active',
     updatedAt: '2026-03-11T14:45:00.000Z',
+  },
+];
+
+const seedAuthSessions: AuthSessionRow[] = [];
+
+const seedWorkspaceInvites: WorkspaceInvite[] = [
+  {
+    id: 'invite_taylor_observer',
+    email: 'taylor.observer@altira-demo.local',
+    fullName: 'Taylor Observer',
+    role: 'user',
+    capabilities: [],
+    scopeTeams: [],
+    rosterMemberId: null,
+    status: 'pending',
+    invitedByUserId: 'user_dana_admin',
+    acceptedWorkspaceUserId: null,
+    createdAt: '2026-03-16T12:30:00.000Z',
+    updatedAt: '2026-03-16T12:30:00.000Z',
+    acceptedAt: null,
+    magicLinkSentAt: null,
+    magicLinkExpiresAt: null,
+  },
+];
+
+const seedAuditEvents: AuditEvent[] = [
+  {
+    id: 'audit_access_admin_created_kim',
+    category: 'access',
+    action: 'workspace_user_created',
+    targetType: 'workspace_user',
+    targetId: 'user_kim_manager',
+    actorUserId: 'user_dana_admin',
+    actorName: 'Dana Smith',
+    actorRole: 'admin',
+    summary: 'Dana Smith created workspace user Kim Patel as a manager.',
+    detail: 'Initial manager access created for Operations oversight.',
+    createdAt: '2026-03-11T14:40:00.000Z',
+  },
+  {
+    id: 'audit_access_scope_morgan',
+    category: 'access',
+    action: 'manager_scope_updated',
+    targetType: 'workspace_user',
+    targetId: 'user_morgan_facilitator',
+    actorUserId: 'user_dana_admin',
+    actorName: 'Dana Smith',
+    actorRole: 'admin',
+    summary: 'Dana Smith updated Morgan Avery scope to Executive, Security.',
+    detail: 'Tabletop facilitate capability remains enabled.',
+    createdAt: '2026-03-11T14:35:00.000Z',
+  },
+  {
+    id: 'audit_operations_launch_tabletop',
+    category: 'operations',
+    action: 'launch_created',
+    targetType: 'launch',
+    targetId: 'launch_vendor_tabletop_exec',
+    actorUserId: 'user_dana_admin',
+    actorName: 'Dana Smith',
+    actorRole: 'admin',
+    summary: 'Dana Smith launched Core Vendor Outage Tabletop.',
+    detail: 'Executive tabletop launch created from the approved vendor outage draft.',
+    createdAt: '2026-03-08T09:00:00.000Z',
+  },
+  {
+    id: 'audit_operations_assignment_ops',
+    category: 'operations',
+    action: 'participant_assignment_created',
+    targetType: 'launch',
+    targetId: 'launch_q2_cyber_wave1',
+    actorUserId: 'user_dana_admin',
+    actorName: 'Dana Smith',
+    actorRole: 'admin',
+    summary: 'Dana Smith assigned Kim Patel to Q2 Cyber Escalation Drill.',
+    detail: 'Due date set for the current quarter exercise wave.',
+    createdAt: '2026-03-12T15:00:00.000Z',
+  },
+  {
+    id: 'audit_access_invite_taylor',
+    category: 'access',
+    action: 'workspace_invite_created',
+    targetType: 'workspace_invite',
+    targetId: 'invite_taylor_observer',
+    actorUserId: 'user_dana_admin',
+    actorName: 'Dana Smith',
+    actorRole: 'admin',
+    summary: 'Dana Smith created a workspace invite for Taylor Observer.',
+    detail: 'Invite remains pending until first sign-in.',
+    createdAt: '2026-03-16T12:30:00.000Z',
   },
 ];
 
@@ -1186,6 +1722,11 @@ const seedLaunches: Launch[] = [
     learningObjectives: 'Validate the first escalation actions, vendor coordination path, and cross-functional communication chain.',
     tabletopPhase: null,
     facilitatorNotes: '',
+    reportCloseoutNotes: '',
+    reportFollowUpText: '',
+    reportClosedAt: null,
+    reportClosedByUserId: null,
+    reportClosedByName: null,
     createdAt: '2026-03-06T18:00:00.000Z',
     updatedAt: '2026-03-07T12:00:00.000Z',
   },
@@ -1204,6 +1745,11 @@ const seedLaunches: Launch[] = [
     tabletopPhase: 'briefing',
     facilitatorNotes:
       'Start with the vendor outage alert, then press on customer communications, manual workarounds, and escalation ownership.',
+    reportCloseoutNotes: '',
+    reportFollowUpText: '',
+    reportClosedAt: null,
+    reportClosedByUserId: null,
+    reportClosedByName: null,
     createdAt: '2026-03-08T18:00:00.000Z',
     updatedAt: '2026-03-08T18:00:00.000Z',
   },
@@ -1309,6 +1855,9 @@ export class MemoryResilienceStore implements ResilienceStore {
   private scenarioDrafts: ScenarioDraft[];
   private rosterMembers: RosterMember[];
   private workspaceUsers: WorkspaceUser[];
+  private workspaceInvites: WorkspaceInvite[];
+  private auditEvents: AuditEvent[];
+  private authSessions: AuthSessionRow[];
   private launches: Launch[];
   private participantRuns: ParticipantRun[];
 
@@ -1321,6 +1870,9 @@ export class MemoryResilienceStore implements ResilienceStore {
     scenarioDrafts?: ScenarioDraft[];
     rosterMembers?: RosterMember[];
     workspaceUsers?: WorkspaceUser[];
+    workspaceInvites?: WorkspaceInvite[];
+    auditEvents?: AuditEvent[];
+    authSessions?: AuthSessionRow[];
     launches?: Launch[];
     participantRuns?: ParticipantRun[];
   }) {
@@ -1332,6 +1884,9 @@ export class MemoryResilienceStore implements ResilienceStore {
     this.scenarioDrafts = structuredClone(seed?.scenarioDrafts ?? seedScenarioDrafts);
     this.rosterMembers = structuredClone(seed?.rosterMembers ?? seedRosterMembers);
     this.workspaceUsers = structuredClone(seed?.workspaceUsers ?? seedWorkspaceUsers);
+    this.workspaceInvites = structuredClone(seed?.workspaceInvites ?? seedWorkspaceInvites);
+    this.auditEvents = structuredClone(seed?.auditEvents ?? seedAuditEvents);
+    this.authSessions = structuredClone(seed?.authSessions ?? seedAuthSessions);
     this.launches = structuredClone(seed?.launches ?? seedLaunches);
     this.participantRuns = structuredClone(seed?.participantRuns ?? seedParticipantRuns);
   }
@@ -1630,6 +2185,11 @@ export class MemoryResilienceStore implements ResilienceStore {
     return structuredClone(this.scenarioDrafts).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
+  async getScenarioDraft(id: string): Promise<ScenarioDraft | null> {
+    const draft = this.scenarioDrafts.find((entry) => entry.id === id);
+    return draft ? structuredClone(draft) : null;
+  }
+
   async createScenarioDraft(input: ScenarioDraftInput): Promise<ScenarioDraft> {
     const timestamp = nowIso();
     const draft: ScenarioDraft = {
@@ -1637,6 +2197,10 @@ export class MemoryResilienceStore implements ResilienceStore {
       createdAt: timestamp,
       updatedAt: timestamp,
       ...input,
+      reviewerNotes: input.reviewerNotes ?? null,
+      reviewedAt: input.reviewedAt ?? null,
+      reviewedByUserId: input.reviewedByUserId ?? null,
+      reviewedByName: input.reviewedByName ?? null,
     };
     this.scenarioDrafts.unshift(draft);
     return structuredClone(draft);
@@ -1646,7 +2210,13 @@ export class MemoryResilienceStore implements ResilienceStore {
     const draft = this.scenarioDrafts.find((entry) => entry.id === id);
     if (!draft) return null;
 
-    Object.assign(draft, patch, { updatedAt: nowIso() });
+    Object.assign(draft, patch, {
+      updatedAt: nowIso(),
+      reviewerNotes: patch.reviewerNotes === undefined ? draft.reviewerNotes : patch.reviewerNotes,
+      reviewedAt: patch.reviewedAt === undefined ? draft.reviewedAt : patch.reviewedAt,
+      reviewedByUserId: patch.reviewedByUserId === undefined ? draft.reviewedByUserId : patch.reviewedByUserId,
+      reviewedByName: patch.reviewedByName === undefined ? draft.reviewedByName : patch.reviewedByName,
+    });
     return structuredClone(draft);
   }
 
@@ -1688,6 +2258,228 @@ export class MemoryResilienceStore implements ResilienceStore {
     return user ? structuredClone(user) : null;
   }
 
+  async getWorkspaceUserByEmail(email: string): Promise<WorkspaceUser | null> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = this.workspaceUsers.find((entry) => entry.email.trim().toLowerCase() === normalizedEmail);
+    return user ? structuredClone(user) : null;
+  }
+
+  async createWorkspaceUser(input: WorkspaceUserInput): Promise<WorkspaceUser> {
+    const user: WorkspaceUser = {
+      id: crypto.randomUUID(),
+      fullName: input.fullName,
+      email: input.email,
+      role: input.role,
+      capabilities: input.capabilities,
+      scopeTeams: input.scopeTeams,
+      rosterMemberId: input.rosterMemberId,
+      status: input.status,
+      updatedAt: nowIso(),
+    };
+
+    this.workspaceUsers.unshift(user);
+    return structuredClone(user);
+  }
+
+  async updateWorkspaceUser(id: string, patch: WorkspaceUserPatch): Promise<WorkspaceUser | null> {
+    const user = this.workspaceUsers.find((entry) => entry.id === id);
+    if (!user) return null;
+
+    Object.assign(user, patch, {
+      capabilities: patch.capabilities ?? user.capabilities,
+      scopeTeams: patch.scopeTeams ?? user.scopeTeams,
+      updatedAt: nowIso(),
+    });
+    return structuredClone(user);
+  }
+
+  async listWorkspaceInvites(): Promise<WorkspaceInvite[]> {
+    return structuredClone(this.workspaceInvites).sort(compareWorkspaceInvites);
+  }
+
+  async createWorkspaceInvite(input: WorkspaceInviteInput & { invitedByUserId: string | null }): Promise<WorkspaceInvite> {
+    const timestamp = nowIso();
+    const invite: WorkspaceInvite = {
+      id: crypto.randomUUID(),
+      email: input.email,
+      fullName: input.fullName,
+      role: input.role,
+      capabilities: input.capabilities,
+      scopeTeams: input.scopeTeams,
+      rosterMemberId: input.rosterMemberId,
+      status: 'pending',
+      invitedByUserId: input.invitedByUserId,
+      acceptedWorkspaceUserId: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      acceptedAt: null,
+      magicLinkSentAt: null,
+      magicLinkExpiresAt: null,
+    };
+
+    this.workspaceInvites.unshift(invite);
+    return structuredClone(invite);
+  }
+
+  async updateWorkspaceInvite(id: string, patch: WorkspaceInvitePatch): Promise<WorkspaceInvite | null> {
+    const invite = this.workspaceInvites.find((entry) => entry.id === id);
+    if (!invite) return null;
+
+    if (patch.status === 'revoked') {
+      invite.status = 'revoked';
+      invite.updatedAt = nowIso();
+      invite.magicLinkSentAt = null;
+      invite.magicLinkExpiresAt = null;
+      (invite as WorkspaceInvite & { magicLinkTokenHash?: string | null }).magicLinkTokenHash = null;
+      return structuredClone(invite);
+    }
+
+    if (patch.status === 'pending') {
+      invite.status = 'pending';
+      invite.updatedAt = nowIso();
+      invite.acceptedWorkspaceUserId = null;
+      invite.acceptedAt = null;
+      invite.magicLinkSentAt = null;
+      invite.magicLinkExpiresAt = null;
+      return structuredClone(invite);
+    }
+
+    return structuredClone(invite);
+  }
+
+  async issueWorkspaceInviteMagicLink(
+    id: string,
+    input: { tokenHash: string; expiresAt: string },
+  ): Promise<WorkspaceInvite | null> {
+    const invite = this.workspaceInvites.find((entry) => entry.id === id);
+    if (!invite) return null;
+
+    const timestamp = nowIso();
+    Object.assign(invite, {
+      updatedAt: timestamp,
+      magicLinkSentAt: timestamp,
+      magicLinkExpiresAt: input.expiresAt,
+    });
+    (invite as WorkspaceInvite & { magicLinkTokenHash?: string | null }).magicLinkTokenHash = input.tokenHash;
+    return structuredClone(invite);
+  }
+
+  async getWorkspaceInviteByMagicLinkTokenHash(tokenHash: string): Promise<WorkspaceInvite | null> {
+    const invite = this.workspaceInvites.find(
+      (entry) =>
+        entry.status === 'pending' &&
+        (entry as WorkspaceInvite & { magicLinkTokenHash?: string | null }).magicLinkTokenHash === tokenHash,
+    );
+    if (!invite) return null;
+    if (invite.magicLinkExpiresAt && invite.magicLinkExpiresAt <= nowIso()) return null;
+    return structuredClone(invite);
+  }
+
+  async getPendingWorkspaceInviteByEmail(email: string): Promise<WorkspaceInvite | null> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const invite = this.workspaceInvites.find(
+      (entry) => entry.status === 'pending' && entry.email.trim().toLowerCase() === normalizedEmail,
+    );
+    return invite ? structuredClone(invite) : null;
+  }
+
+  async acceptWorkspaceInvite(id: string, workspaceUserId: string): Promise<WorkspaceInvite | null> {
+    const invite = this.workspaceInvites.find((entry) => entry.id === id);
+    if (!invite) return null;
+
+    const timestamp = nowIso();
+    invite.status = 'accepted';
+    invite.acceptedWorkspaceUserId = workspaceUserId;
+    invite.acceptedAt = timestamp;
+    invite.updatedAt = timestamp;
+    invite.magicLinkSentAt = null;
+    invite.magicLinkExpiresAt = null;
+    (invite as WorkspaceInvite & { magicLinkTokenHash?: string | null }).magicLinkTokenHash = null;
+    return structuredClone(invite);
+  }
+
+  async listAuditEvents(limit?: number): Promise<AuditEvent[]> {
+    const events = structuredClone(this.auditEvents).sort(compareAuditEvents);
+    return typeof limit === 'number' ? events.slice(0, limit) : events;
+  }
+
+  async createAuditEvent(input: {
+    category: AuditEventCategory;
+    action: AuditEventAction;
+    targetType: AuditEventTargetType;
+    targetId: string;
+    actorUserId: string | null;
+    actorName: string;
+    actorRole: WorkspaceUserRole | 'system';
+    summary: string;
+    detail?: string | null;
+  }): Promise<AuditEvent> {
+    const event: AuditEvent = {
+      id: crypto.randomUUID(),
+      category: input.category,
+      action: input.action,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+      actorRole: input.actorRole,
+      summary: input.summary,
+      detail: input.detail ?? null,
+      createdAt: nowIso(),
+    };
+
+    this.auditEvents.unshift(event);
+    return structuredClone(event);
+  }
+
+  async createAuthSession(input: {
+    workspaceUserId: string;
+    tokenHash: string;
+    expiresAt: string;
+  }): Promise<AuthSession> {
+    const timestamp = nowIso();
+    const session: AuthSessionRow = {
+      id: crypto.randomUUID(),
+      workspaceUserId: input.workspaceUserId,
+      tokenHash: input.tokenHash,
+      expiresAt: input.expiresAt,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      lastSeenAt: timestamp,
+      revokedAt: null,
+    };
+
+    this.authSessions.unshift(session);
+    return structuredClone(mapAuthSessionRow(session));
+  }
+
+  async getAuthSessionByTokenHash(tokenHash: string): Promise<AuthSession | null> {
+    const session = this.authSessions.find((entry) => entry.tokenHash === tokenHash && !entry.revokedAt);
+    if (!session) return null;
+    if (session.expiresAt <= nowIso()) return null;
+    return structuredClone(mapAuthSessionRow(session));
+  }
+
+  async revokeAuthSession(id: string): Promise<void> {
+    const session = this.authSessions.find((entry) => entry.id === id);
+    if (!session) return;
+
+    const timestamp = nowIso();
+    session.revokedAt = timestamp;
+    session.updatedAt = timestamp;
+  }
+
+  async touchAuthSession(id: string): Promise<AuthSession | null> {
+    const session = this.authSessions.find((entry) => entry.id === id && !entry.revokedAt);
+    if (!session) return null;
+    if (session.expiresAt <= nowIso()) return null;
+
+    const timestamp = nowIso();
+    session.lastSeenAt = timestamp;
+    session.updatedAt = timestamp;
+    return structuredClone(mapAuthSessionRow(session));
+  }
+
   async listLaunches(): Promise<Launch[]> {
     return this.launches
       .map((launch) => syncLaunchWithRuns(launch, this.participantRuns.filter((run) => run.launchId === launch.id)))
@@ -1720,6 +2512,11 @@ export class MemoryResilienceStore implements ResilienceStore {
       learningObjectives: draft.learningObjectives,
       tabletopPhase: defaultTabletopPhase(draft.launchMode),
       facilitatorNotes: '',
+      reportCloseoutNotes: '',
+      reportFollowUpText: '',
+      reportClosedAt: null,
+      reportClosedByUserId: null,
+      reportClosedByName: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -1761,6 +2558,31 @@ export class MemoryResilienceStore implements ResilienceStore {
     launch.updatedAt = nowIso();
     this.syncMemoryLaunchStatus(id);
 
+    return structuredClone(this.launches.find((entry) => entry.id === id) ?? launch);
+  }
+
+  async updateReportReview(
+    id: string,
+    input: {
+      closeoutNotes: string;
+      followUpText: string;
+      markClosed: boolean;
+      actorUserId: string;
+      actorName: string;
+    },
+  ): Promise<Launch | null> {
+    const launch = this.launches.find((entry) => entry.id === id);
+    if (!launch) return null;
+
+    const timestamp = nowIso();
+    launch.reportCloseoutNotes = input.closeoutNotes;
+    launch.reportFollowUpText = input.followUpText;
+    launch.reportClosedAt = input.markClosed ? timestamp : null;
+    launch.reportClosedByUserId = input.markClosed ? input.actorUserId : null;
+    launch.reportClosedByName = input.markClosed ? input.actorName : null;
+    launch.updatedAt = timestamp;
+
+    this.syncMemoryLaunchStatus(id);
     return structuredClone(this.launches.find((entry) => entry.id === id) ?? launch);
   }
 
@@ -2457,6 +3279,8 @@ export class D1ResilienceStore implements ResilienceStore {
     const result = await this.db.prepare(
       `SELECT id, title, template_id AS templateId, audience, launch_mode AS launchMode, difficulty,
               learning_objectives AS learningObjectives, approval_status AS approvalStatus,
+              reviewer_notes AS reviewerNotes, reviewed_at AS reviewedAt,
+              reviewed_by_user_id AS reviewedByUserId, reviewed_by_name AS reviewedByName,
               scheduled_start_at AS scheduledStartAt, participants_label AS participantsLabel,
               created_at AS createdAt, updated_at AS updatedAt
        FROM scenario_drafts
@@ -2466,6 +3290,21 @@ export class D1ResilienceStore implements ResilienceStore {
     return (result.results ?? []).map(mapScenarioDraftRow);
   }
 
+  async getScenarioDraft(id: string): Promise<ScenarioDraft | null> {
+    const row = await this.db.prepare(
+      `SELECT id, title, template_id AS templateId, audience, launch_mode AS launchMode, difficulty,
+              learning_objectives AS learningObjectives, approval_status AS approvalStatus,
+              reviewer_notes AS reviewerNotes, reviewed_at AS reviewedAt,
+              reviewed_by_user_id AS reviewedByUserId, reviewed_by_name AS reviewedByName,
+              scheduled_start_at AS scheduledStartAt, participants_label AS participantsLabel,
+              created_at AS createdAt, updated_at AS updatedAt
+       FROM scenario_drafts
+       WHERE id = ?`,
+    ).bind(id).first<ScenarioDraftRow>();
+
+    return row ? mapScenarioDraftRow(row) : null;
+  }
+
   async createScenarioDraft(input: ScenarioDraftInput): Promise<ScenarioDraft> {
     const timestamp = nowIso();
     const draft: ScenarioDraft = {
@@ -2473,13 +3312,18 @@ export class D1ResilienceStore implements ResilienceStore {
       createdAt: timestamp,
       updatedAt: timestamp,
       ...input,
+      reviewerNotes: input.reviewerNotes ?? null,
+      reviewedAt: input.reviewedAt ?? null,
+      reviewedByUserId: input.reviewedByUserId ?? null,
+      reviewedByName: input.reviewedByName ?? null,
     };
 
     await this.db.prepare(
       `INSERT INTO scenario_drafts (
         id, title, template_id, audience, launch_mode, difficulty, learning_objectives,
-        approval_status, scheduled_start_at, participants_label, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        approval_status, reviewer_notes, reviewed_at, reviewed_by_user_id, reviewed_by_name,
+        scheduled_start_at, participants_label, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       draft.id,
       draft.title,
@@ -2489,6 +3333,10 @@ export class D1ResilienceStore implements ResilienceStore {
       draft.difficulty,
       draft.learningObjectives,
       draft.approvalStatus,
+      draft.reviewerNotes,
+      draft.reviewedAt,
+      draft.reviewedByUserId,
+      draft.reviewedByName,
       draft.scheduledStartAt,
       draft.participantsLabel,
       draft.createdAt,
@@ -2502,6 +3350,8 @@ export class D1ResilienceStore implements ResilienceStore {
     const current = await this.db.prepare(
       `SELECT id, title, template_id AS templateId, audience, launch_mode AS launchMode, difficulty,
               learning_objectives AS learningObjectives, approval_status AS approvalStatus,
+              reviewer_notes AS reviewerNotes, reviewed_at AS reviewedAt,
+              reviewed_by_user_id AS reviewedByUserId, reviewed_by_name AS reviewedByName,
               scheduled_start_at AS scheduledStartAt, participants_label AS participantsLabel,
               created_at AS createdAt, updated_at AS updatedAt
        FROM scenario_drafts
@@ -2514,6 +3364,10 @@ export class D1ResilienceStore implements ResilienceStore {
       ...mapScenarioDraftRow(current),
       ...patch,
       updatedAt: nowIso(),
+      reviewerNotes: patch.reviewerNotes === undefined ? current.reviewerNotes : patch.reviewerNotes,
+      reviewedAt: patch.reviewedAt === undefined ? current.reviewedAt : patch.reviewedAt,
+      reviewedByUserId: patch.reviewedByUserId === undefined ? current.reviewedByUserId : patch.reviewedByUserId,
+      reviewedByName: patch.reviewedByName === undefined ? current.reviewedByName : patch.reviewedByName,
       scheduledStartAt: patch.scheduledStartAt === undefined ? current.scheduledStartAt : patch.scheduledStartAt,
       participantsLabel: patch.participantsLabel === undefined ? current.participantsLabel : patch.participantsLabel,
     };
@@ -2521,7 +3375,8 @@ export class D1ResilienceStore implements ResilienceStore {
     await this.db.prepare(
       `UPDATE scenario_drafts
        SET title = ?, template_id = ?, audience = ?, launch_mode = ?, difficulty = ?, learning_objectives = ?,
-           approval_status = ?, scheduled_start_at = ?, participants_label = ?, updated_at = ?
+           approval_status = ?, reviewer_notes = ?, reviewed_at = ?, reviewed_by_user_id = ?, reviewed_by_name = ?,
+           scheduled_start_at = ?, participants_label = ?, updated_at = ?
        WHERE id = ?`,
     ).bind(
       next.title,
@@ -2531,6 +3386,10 @@ export class D1ResilienceStore implements ResilienceStore {
       next.difficulty,
       next.learningObjectives,
       next.approvalStatus,
+      next.reviewerNotes,
+      next.reviewedAt,
+      next.reviewedByUserId,
+      next.reviewedByName,
       next.scheduledStartAt,
       next.participantsLabel,
       next.updatedAt,
@@ -2620,7 +3479,8 @@ export class D1ResilienceStore implements ResilienceStore {
 
   async listWorkspaceUsers(): Promise<WorkspaceUser[]> {
     const result = await this.db.prepare(
-      `SELECT id, full_name AS fullName, email, role, roster_member_id AS rosterMemberId,
+      `SELECT id, full_name AS fullName, email, role, capabilities_json AS capabilitiesJson,
+              scope_teams_json AS scopeTeamsJson, roster_member_id AS rosterMemberId,
               status, created_at AS createdAt, updated_at AS updatedAt
        FROM workspace_users
        ORDER BY full_name ASC, updated_at DESC`,
@@ -2631,13 +3491,466 @@ export class D1ResilienceStore implements ResilienceStore {
 
   async getWorkspaceUser(id: string): Promise<WorkspaceUser | null> {
     const row = await this.db.prepare(
-      `SELECT id, full_name AS fullName, email, role, roster_member_id AS rosterMemberId,
+      `SELECT id, full_name AS fullName, email, role, capabilities_json AS capabilitiesJson,
+              scope_teams_json AS scopeTeamsJson, roster_member_id AS rosterMemberId,
               status, created_at AS createdAt, updated_at AS updatedAt
        FROM workspace_users
        WHERE id = ?`,
     ).bind(id).first<WorkspaceUserRow>();
 
     return row ? mapWorkspaceUserRow(row) : null;
+  }
+
+  async getWorkspaceUserByEmail(email: string): Promise<WorkspaceUser | null> {
+    const row = await this.db.prepare(
+      `SELECT id, full_name AS fullName, email, role, capabilities_json AS capabilitiesJson,
+              scope_teams_json AS scopeTeamsJson, roster_member_id AS rosterMemberId,
+              status, created_at AS createdAt, updated_at AS updatedAt
+       FROM workspace_users
+       WHERE lower(email) = lower(?)`,
+    ).bind(email.trim()).first<WorkspaceUserRow>();
+
+    return row ? mapWorkspaceUserRow(row) : null;
+  }
+
+  async createWorkspaceUser(input: WorkspaceUserInput): Promise<WorkspaceUser> {
+    const user: WorkspaceUser = {
+      id: crypto.randomUUID(),
+      fullName: input.fullName,
+      email: input.email,
+      role: input.role,
+      capabilities: input.capabilities,
+      scopeTeams: input.scopeTeams,
+      rosterMemberId: input.rosterMemberId,
+      status: input.status,
+      updatedAt: nowIso(),
+    };
+
+    await this.db.prepare(
+      `INSERT INTO workspace_users (
+        id,
+        full_name,
+        email,
+        role,
+        capabilities_json,
+        scope_teams_json,
+        roster_member_id,
+        status,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      user.id,
+      user.fullName,
+      user.email,
+      user.role,
+      JSON.stringify(user.capabilities),
+      JSON.stringify(user.scopeTeams),
+      user.rosterMemberId,
+      user.status,
+      user.updatedAt,
+      user.updatedAt,
+    ).run();
+
+    return user;
+  }
+
+  async updateWorkspaceUser(id: string, patch: WorkspaceUserPatch): Promise<WorkspaceUser | null> {
+    const current = await this.getWorkspaceUser(id);
+    if (!current) return null;
+
+    const next: WorkspaceUser = {
+      ...current,
+      ...patch,
+      capabilities: patch.capabilities ?? current.capabilities,
+      scopeTeams: patch.scopeTeams ?? current.scopeTeams,
+      rosterMemberId: patch.rosterMemberId === undefined ? current.rosterMemberId : patch.rosterMemberId,
+      updatedAt: nowIso(),
+    };
+
+    await this.db.prepare(
+      `UPDATE workspace_users
+       SET full_name = ?, email = ?, role = ?, capabilities_json = ?, scope_teams_json = ?, roster_member_id = ?, status = ?, updated_at = ?
+       WHERE id = ?`,
+    ).bind(
+      next.fullName,
+      next.email,
+      next.role,
+      JSON.stringify(next.capabilities),
+      JSON.stringify(next.scopeTeams),
+      next.rosterMemberId,
+      next.status,
+      next.updatedAt,
+      id,
+    ).run();
+
+    return next;
+  }
+
+  async listWorkspaceInvites(): Promise<WorkspaceInvite[]> {
+    const result = await this.db.prepare(
+      `SELECT id, email, full_name AS fullName, role, capabilities_json AS capabilitiesJson,
+              scope_teams_json AS scopeTeamsJson,
+              roster_member_id AS rosterMemberId, status, invited_by_user_id AS invitedByUserId,
+              accepted_workspace_user_id AS acceptedWorkspaceUserId, created_at AS createdAt,
+              updated_at AS updatedAt, accepted_at AS acceptedAt, revoked_at AS revokedAt,
+              magic_link_token_hash AS magicLinkTokenHash, magic_link_expires_at AS magicLinkExpiresAt,
+              magic_link_sent_at AS magicLinkSentAt
+       FROM workspace_invites
+       ORDER BY updated_at DESC, email ASC`,
+    ).all<WorkspaceInviteRow>();
+
+    return (result.results ?? []).map(mapWorkspaceInviteRow).sort(compareWorkspaceInvites);
+  }
+
+  async createWorkspaceInvite(input: WorkspaceInviteInput & { invitedByUserId: string | null }): Promise<WorkspaceInvite> {
+    const invite: WorkspaceInvite = {
+      id: crypto.randomUUID(),
+      email: input.email,
+      fullName: input.fullName,
+      role: input.role,
+      capabilities: input.capabilities,
+      scopeTeams: input.scopeTeams,
+      rosterMemberId: input.rosterMemberId,
+      status: 'pending',
+      invitedByUserId: input.invitedByUserId,
+      acceptedWorkspaceUserId: null,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      acceptedAt: null,
+      magicLinkSentAt: null,
+      magicLinkExpiresAt: null,
+    };
+
+    await this.db.prepare(
+      `INSERT INTO workspace_invites (
+        id,
+        email,
+        full_name,
+        role,
+        capabilities_json,
+        scope_teams_json,
+        roster_member_id,
+        status,
+        invited_by_user_id,
+      accepted_workspace_user_id,
+      created_at,
+      updated_at,
+      accepted_at,
+      revoked_at,
+      magic_link_token_hash,
+      magic_link_expires_at,
+      magic_link_sent_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      invite.id,
+      invite.email,
+      invite.fullName,
+      invite.role,
+      JSON.stringify(invite.capabilities),
+      JSON.stringify(invite.scopeTeams),
+      invite.rosterMemberId,
+      invite.status,
+      invite.invitedByUserId,
+      invite.acceptedWorkspaceUserId,
+      invite.createdAt,
+      invite.updatedAt,
+      invite.acceptedAt,
+      null,
+      null,
+      null,
+      null,
+    ).run();
+
+    return invite;
+  }
+
+  async updateWorkspaceInvite(id: string, patch: WorkspaceInvitePatch): Promise<WorkspaceInvite | null> {
+    const current = await this.db.prepare(
+      `SELECT id, email, full_name AS fullName, role, capabilities_json AS capabilitiesJson,
+              scope_teams_json AS scopeTeamsJson,
+              roster_member_id AS rosterMemberId, status, invited_by_user_id AS invitedByUserId,
+              accepted_workspace_user_id AS acceptedWorkspaceUserId, created_at AS createdAt,
+              updated_at AS updatedAt, accepted_at AS acceptedAt, revoked_at AS revokedAt,
+              magic_link_token_hash AS magicLinkTokenHash, magic_link_expires_at AS magicLinkExpiresAt,
+              magic_link_sent_at AS magicLinkSentAt
+       FROM workspace_invites
+       WHERE id = ?`,
+    ).bind(id).first<WorkspaceInviteRow>();
+
+    if (!current) return null;
+    const invite = mapWorkspaceInviteRow(current);
+
+    if (patch.status === 'revoked') {
+      const timestamp = nowIso();
+      await this.db.prepare(
+        `UPDATE workspace_invites
+         SET status = ?, updated_at = ?, revoked_at = ?, magic_link_token_hash = ?, magic_link_expires_at = ?, magic_link_sent_at = ?
+         WHERE id = ?`,
+      ).bind('revoked', timestamp, timestamp, null, null, null, id).run();
+
+      return {
+        ...invite,
+        status: 'revoked',
+        updatedAt: timestamp,
+      };
+    }
+
+    if (patch.status === 'pending') {
+      const timestamp = nowIso();
+      await this.db.prepare(
+        `UPDATE workspace_invites
+         SET status = ?, updated_at = ?, accepted_workspace_user_id = ?, accepted_at = ?, revoked_at = ?, magic_link_token_hash = ?, magic_link_expires_at = ?, magic_link_sent_at = ?
+         WHERE id = ?`,
+      ).bind('pending', timestamp, null, null, null, null, null, null, id).run();
+
+      return {
+        ...invite,
+        status: 'pending',
+        acceptedWorkspaceUserId: null,
+        acceptedAt: null,
+        updatedAt: timestamp,
+      };
+    }
+
+    return invite;
+  }
+
+  async issueWorkspaceInviteMagicLink(
+    id: string,
+    input: { tokenHash: string; expiresAt: string },
+  ): Promise<WorkspaceInvite | null> {
+    const timestamp = nowIso();
+    await this.db.prepare(
+      `UPDATE workspace_invites
+       SET magic_link_token_hash = ?, magic_link_expires_at = ?, magic_link_sent_at = ?, updated_at = ?
+       WHERE id = ?`,
+    ).bind(input.tokenHash, input.expiresAt, timestamp, timestamp, id).run();
+
+    const row = await this.db.prepare(
+      `SELECT id, email, full_name AS fullName, role, capabilities_json AS capabilitiesJson,
+              scope_teams_json AS scopeTeamsJson,
+              roster_member_id AS rosterMemberId, status, invited_by_user_id AS invitedByUserId,
+              accepted_workspace_user_id AS acceptedWorkspaceUserId, created_at AS createdAt,
+              updated_at AS updatedAt, accepted_at AS acceptedAt, revoked_at AS revokedAt,
+              magic_link_token_hash AS magicLinkTokenHash, magic_link_expires_at AS magicLinkExpiresAt,
+              magic_link_sent_at AS magicLinkSentAt
+       FROM workspace_invites
+       WHERE id = ?`,
+    ).bind(id).first<WorkspaceInviteRow>();
+
+    return row ? mapWorkspaceInviteRow(row) : null;
+  }
+
+  async getWorkspaceInviteByMagicLinkTokenHash(tokenHash: string): Promise<WorkspaceInvite | null> {
+    const row = await this.db.prepare(
+      `SELECT id, email, full_name AS fullName, role, capabilities_json AS capabilitiesJson,
+              scope_teams_json AS scopeTeamsJson,
+              roster_member_id AS rosterMemberId, status, invited_by_user_id AS invitedByUserId,
+              accepted_workspace_user_id AS acceptedWorkspaceUserId, created_at AS createdAt,
+              updated_at AS updatedAt, accepted_at AS acceptedAt, revoked_at AS revokedAt,
+              magic_link_token_hash AS magicLinkTokenHash, magic_link_expires_at AS magicLinkExpiresAt,
+              magic_link_sent_at AS magicLinkSentAt
+       FROM workspace_invites
+       WHERE magic_link_token_hash = ? AND status = 'pending'
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+    ).bind(tokenHash).first<WorkspaceInviteRow>();
+
+    if (!row) return null;
+    const invite = mapWorkspaceInviteRow(row);
+    if (invite.magicLinkExpiresAt && invite.magicLinkExpiresAt <= nowIso()) return null;
+    return invite;
+  }
+
+  async getPendingWorkspaceInviteByEmail(email: string): Promise<WorkspaceInvite | null> {
+    const row = await this.db.prepare(
+      `SELECT id, email, full_name AS fullName, role, capabilities_json AS capabilitiesJson,
+              scope_teams_json AS scopeTeamsJson,
+              roster_member_id AS rosterMemberId, status, invited_by_user_id AS invitedByUserId,
+              accepted_workspace_user_id AS acceptedWorkspaceUserId, created_at AS createdAt,
+              updated_at AS updatedAt, accepted_at AS acceptedAt, revoked_at AS revokedAt,
+              magic_link_token_hash AS magicLinkTokenHash, magic_link_expires_at AS magicLinkExpiresAt,
+              magic_link_sent_at AS magicLinkSentAt
+       FROM workspace_invites
+       WHERE lower(email) = lower(?) AND status = 'pending'
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+    ).bind(email.trim()).first<WorkspaceInviteRow>();
+
+    return row ? mapWorkspaceInviteRow(row) : null;
+  }
+
+  async acceptWorkspaceInvite(id: string, workspaceUserId: string): Promise<WorkspaceInvite | null> {
+    const timestamp = nowIso();
+    await this.db.prepare(
+      `UPDATE workspace_invites
+       SET status = ?, accepted_workspace_user_id = ?, accepted_at = ?, updated_at = ?, magic_link_token_hash = ?, magic_link_expires_at = ?, magic_link_sent_at = ?
+       WHERE id = ?`,
+    ).bind('accepted', workspaceUserId, timestamp, timestamp, null, null, null, id).run();
+
+    const row = await this.db.prepare(
+      `SELECT id, email, full_name AS fullName, role, capabilities_json AS capabilitiesJson,
+              scope_teams_json AS scopeTeamsJson,
+              roster_member_id AS rosterMemberId, status, invited_by_user_id AS invitedByUserId,
+              accepted_workspace_user_id AS acceptedWorkspaceUserId, created_at AS createdAt,
+              updated_at AS updatedAt, accepted_at AS acceptedAt, revoked_at AS revokedAt,
+              magic_link_token_hash AS magicLinkTokenHash, magic_link_expires_at AS magicLinkExpiresAt,
+              magic_link_sent_at AS magicLinkSentAt
+       FROM workspace_invites
+       WHERE id = ?`,
+    ).bind(id).first<WorkspaceInviteRow>();
+
+    return row ? mapWorkspaceInviteRow(row) : null;
+  }
+
+  async listAuditEvents(limit?: number): Promise<AuditEvent[]> {
+    const resolvedLimit = typeof limit === 'number' ? Math.max(1, limit) : 50;
+    const result = await this.db.prepare(
+      `SELECT id, category, action, target_type AS targetType, target_id AS targetId,
+              actor_user_id AS actorUserId, actor_name AS actorName, actor_role AS actorRole,
+              summary, detail, created_at AS createdAt
+       FROM audit_events
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+    ).bind(resolvedLimit).all<AuditEventRow>();
+
+    return (result.results ?? []).map(mapAuditEventRow).sort(compareAuditEvents);
+  }
+
+  async createAuditEvent(input: {
+    category: AuditEventCategory;
+    action: AuditEventAction;
+    targetType: AuditEventTargetType;
+    targetId: string;
+    actorUserId: string | null;
+    actorName: string;
+    actorRole: WorkspaceUserRole | 'system';
+    summary: string;
+    detail?: string | null;
+  }): Promise<AuditEvent> {
+    const event: AuditEvent = {
+      id: crypto.randomUUID(),
+      category: input.category,
+      action: input.action,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+      actorRole: input.actorRole,
+      summary: input.summary,
+      detail: input.detail ?? null,
+      createdAt: nowIso(),
+    };
+
+    await this.db.prepare(
+      `INSERT INTO audit_events (
+        id,
+        category,
+        action,
+        target_type,
+        target_id,
+        actor_user_id,
+        actor_name,
+        actor_role,
+        summary,
+        detail,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      event.id,
+      event.category,
+      event.action,
+      event.targetType,
+      event.targetId,
+      event.actorUserId,
+      event.actorName,
+      event.actorRole,
+      event.summary,
+      event.detail,
+      event.createdAt,
+    ).run();
+
+    return event;
+  }
+
+  async createAuthSession(input: {
+    workspaceUserId: string;
+    tokenHash: string;
+    expiresAt: string;
+  }): Promise<AuthSession> {
+    const session: AuthSession = {
+      id: crypto.randomUUID(),
+      workspaceUserId: input.workspaceUserId,
+      expiresAt: input.expiresAt,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      lastSeenAt: nowIso(),
+    };
+
+    await this.db.prepare(
+      `INSERT INTO auth_sessions (
+        id,
+        workspace_user_id,
+        token_hash,
+        expires_at,
+        created_at,
+        updated_at,
+        last_seen_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      session.id,
+      session.workspaceUserId,
+      input.tokenHash,
+      session.expiresAt,
+      session.createdAt,
+      session.updatedAt,
+      session.lastSeenAt,
+    ).run();
+
+    return session;
+  }
+
+  async getAuthSessionByTokenHash(tokenHash: string): Promise<AuthSession | null> {
+    const row = await this.db.prepare(
+      `SELECT id, workspace_user_id AS workspaceUserId, token_hash AS tokenHash, expires_at AS expiresAt,
+              created_at AS createdAt, updated_at AS updatedAt, last_seen_at AS lastSeenAt, revoked_at AS revokedAt
+       FROM auth_sessions
+       WHERE token_hash = ?
+       LIMIT 1`,
+    ).bind(tokenHash).first<AuthSessionRow>();
+
+    if (!row || row.revokedAt || row.expiresAt <= nowIso()) return null;
+    return mapAuthSessionRow(row);
+  }
+
+  async revokeAuthSession(id: string): Promise<void> {
+    const timestamp = nowIso();
+    await this.db.prepare(
+      `UPDATE auth_sessions
+       SET revoked_at = ?, updated_at = ?
+       WHERE id = ?`,
+    ).bind(timestamp, timestamp, id).run();
+  }
+
+  async touchAuthSession(id: string): Promise<AuthSession | null> {
+    const timestamp = nowIso();
+    await this.db.prepare(
+      `UPDATE auth_sessions
+       SET last_seen_at = ?, updated_at = ?
+       WHERE id = ? AND revoked_at IS NULL AND expires_at > ?`,
+    ).bind(timestamp, timestamp, id, timestamp).run();
+
+    const row = await this.db.prepare(
+      `SELECT id, workspace_user_id AS workspaceUserId, token_hash AS tokenHash, expires_at AS expiresAt,
+              created_at AS createdAt, updated_at AS updatedAt, last_seen_at AS lastSeenAt, revoked_at AS revokedAt
+       FROM auth_sessions
+       WHERE id = ?
+       LIMIT 1`,
+    ).bind(id).first<AuthSessionRow>();
+
+    if (!row || row.revokedAt || row.expiresAt <= nowIso()) return null;
+    return mapAuthSessionRow(row);
   }
 
   async listLaunches(): Promise<Launch[]> {
@@ -2656,6 +3969,9 @@ export class D1ResilienceStore implements ResilienceStore {
               starts_at AS startsAt, participants_label AS participantsLabel,
               scenario_brief AS scenarioBrief, learning_objectives AS learningObjectives,
               tabletop_phase AS tabletopPhase, facilitator_notes AS facilitatorNotes,
+              report_closeout_notes AS reportCloseoutNotes, report_follow_up_text AS reportFollowUpText,
+              report_closed_at AS reportClosedAt, report_closed_by_user_id AS reportClosedByUserId,
+              report_closed_by_name AS reportClosedByName,
               created_at AS createdAt, updated_at AS updatedAt
        FROM launches
        WHERE id = ?`,
@@ -2671,6 +3987,8 @@ export class D1ResilienceStore implements ResilienceStore {
     const draft = await this.db.prepare(
       `SELECT id, title, template_id AS templateId, audience, launch_mode AS launchMode, difficulty,
               learning_objectives AS learningObjectives, approval_status AS approvalStatus,
+              reviewer_notes AS reviewerNotes, reviewed_at AS reviewedAt,
+              reviewed_by_user_id AS reviewedByUserId, reviewed_by_name AS reviewedByName,
               scheduled_start_at AS scheduledStartAt, participants_label AS participantsLabel,
               created_at AS createdAt, updated_at AS updatedAt
        FROM scenario_drafts
@@ -2694,6 +4012,11 @@ export class D1ResilienceStore implements ResilienceStore {
       learningObjectives: scenarioDraft.learningObjectives,
       tabletopPhase: defaultTabletopPhase(scenarioDraft.launchMode),
       facilitatorNotes: '',
+      reportCloseoutNotes: '',
+      reportFollowUpText: '',
+      reportClosedAt: null,
+      reportClosedByUserId: null,
+      reportClosedByName: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -2701,8 +4024,10 @@ export class D1ResilienceStore implements ResilienceStore {
     await this.db.prepare(
       `INSERT INTO launches (
         id, scenario_draft_id, name, mode, audience, status, starts_at, participants_label,
-        scenario_brief, learning_objectives, tabletop_phase, facilitator_notes, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        scenario_brief, learning_objectives, tabletop_phase, facilitator_notes,
+        report_closeout_notes, report_follow_up_text, report_closed_at, report_closed_by_user_id, report_closed_by_name,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       launch.id,
       launch.scenarioDraftId,
@@ -2716,6 +4041,11 @@ export class D1ResilienceStore implements ResilienceStore {
       launch.learningObjectives,
       launch.tabletopPhase,
       launch.facilitatorNotes,
+      launch.reportCloseoutNotes,
+      launch.reportFollowUpText,
+      launch.reportClosedAt,
+      launch.reportClosedByUserId,
+      launch.reportClosedByName,
       launch.createdAt,
       launch.updatedAt,
     ).run();
@@ -2738,6 +4068,8 @@ export class D1ResilienceStore implements ResilienceStore {
       const replacementDraft = await this.db.prepare(
         `SELECT id, title, template_id AS templateId, audience, launch_mode AS launchMode, difficulty,
                 learning_objectives AS learningObjectives, approval_status AS approvalStatus,
+                reviewer_notes AS reviewerNotes, reviewed_at AS reviewedAt,
+                reviewed_by_user_id AS reviewedByUserId, reviewed_by_name AS reviewedByName,
                 scheduled_start_at AS scheduledStartAt, participants_label AS participantsLabel,
                 created_at AS createdAt, updated_at AS updatedAt
          FROM scenario_drafts
@@ -2783,7 +4115,8 @@ export class D1ResilienceStore implements ResilienceStore {
       `UPDATE launches
        SET scenario_draft_id = ?, name = ?, mode = ?, audience = ?, status = ?, starts_at = ?,
            participants_label = ?, scenario_brief = ?, learning_objectives = ?, tabletop_phase = ?,
-           facilitator_notes = ?, updated_at = ?
+           facilitator_notes = ?, report_closeout_notes = ?, report_follow_up_text = ?, report_closed_at = ?,
+           report_closed_by_user_id = ?, report_closed_by_name = ?, updated_at = ?
        WHERE id = ?`,
     ).bind(
       next.scenarioDraftId,
@@ -2797,11 +4130,58 @@ export class D1ResilienceStore implements ResilienceStore {
       next.learningObjectives,
       next.tabletopPhase,
       next.facilitatorNotes,
+      next.reportCloseoutNotes,
+      next.reportFollowUpText,
+      next.reportClosedAt,
+      next.reportClosedByUserId,
+      next.reportClosedByName,
       next.updatedAt,
       id,
     ).run();
 
     await this.syncLaunchStatus(id);
+    return this.getLaunch(id);
+  }
+
+  async updateReportReview(
+    id: string,
+    input: {
+      closeoutNotes: string;
+      followUpText: string;
+      markClosed: boolean;
+      actorUserId: string;
+      actorName: string;
+    },
+  ): Promise<Launch | null> {
+    const current = await this.getLaunch(id);
+    if (!current) return null;
+
+    const timestamp = nowIso();
+    const next: Launch = {
+      ...current,
+      reportCloseoutNotes: input.closeoutNotes,
+      reportFollowUpText: input.followUpText,
+      reportClosedAt: input.markClosed ? timestamp : null,
+      reportClosedByUserId: input.markClosed ? input.actorUserId : null,
+      reportClosedByName: input.markClosed ? input.actorName : null,
+      updatedAt: timestamp,
+    };
+
+    await this.db.prepare(
+      `UPDATE launches
+       SET report_closeout_notes = ?, report_follow_up_text = ?, report_closed_at = ?,
+           report_closed_by_user_id = ?, report_closed_by_name = ?, updated_at = ?
+       WHERE id = ?`,
+    ).bind(
+      next.reportCloseoutNotes,
+      next.reportFollowUpText,
+      next.reportClosedAt,
+      next.reportClosedByUserId,
+      next.reportClosedByName,
+      next.updatedAt,
+      id,
+    ).run();
+
     return this.getLaunch(id);
   }
 
@@ -2976,6 +4356,9 @@ export class D1ResilienceStore implements ResilienceStore {
               starts_at AS startsAt, participants_label AS participantsLabel,
               scenario_brief AS scenarioBrief, learning_objectives AS learningObjectives,
               tabletop_phase AS tabletopPhase, facilitator_notes AS facilitatorNotes,
+              report_closeout_notes AS reportCloseoutNotes, report_follow_up_text AS reportFollowUpText,
+              report_closed_at AS reportClosedAt, report_closed_by_user_id AS reportClosedByUserId,
+              report_closed_by_name AS reportClosedByName,
               created_at AS createdAt, updated_at AS updatedAt
        FROM launches
        ORDER BY updated_at DESC, name ASC`,
@@ -3447,6 +4830,21 @@ function evidenceReady(value: boolean): EvidenceStatus {
   return value ? 'ready' : 'pending';
 }
 
+function deriveReportStatus(
+  launch: Pick<Launch, 'reportClosedAt'>,
+  metrics: ReturnType<typeof summarizeParticipantRuns>,
+): ReportStatus {
+  if (launch.reportClosedAt) return 'closed';
+  return metrics.completionRate === 100 ? 'ready' : 'in_review';
+}
+
+function parseFollowUpActions(value: string): string[] {
+  return value
+    .split('\n')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 function buildReportHighlights(
   launch: Launch,
   participantRuns: ParticipantRun[],
@@ -3583,6 +4981,10 @@ function buildReportEvidencePackage(report: ReportDetail, generatedAt: string): 
     scenarioBrief: report.scenarioBrief,
     highlights: report.highlights,
     afterActionSummary: report.afterActionSummary,
+    closeoutNotes: report.closeoutNotes,
+    followUpActions: report.followUpActions,
+    closedAt: report.closedAt,
+    closedByName: report.closedByName,
     evidenceItems: report.evidenceItems,
     participantRuns: report.participantRuns,
   };
@@ -3615,6 +5017,15 @@ function buildMarkdownReportExport(report: ReportEvidencePackage): string {
     '',
     '## After-Action Summary',
     report.afterActionSummary.executiveSummary,
+    '',
+    '## Operator Closeout',
+    report.closeoutNotes || 'No operator closeout notes recorded.',
+    '',
+    `- Closed at: ${report.closedAt ?? 'Not closed'}`,
+    `- Closed by: ${report.closedByName ?? 'Not recorded'}`,
+    '',
+    '### Operator Follow-Up Actions',
+    ...formatMarkdownList(report.followUpActions, 'No operator follow-up actions recorded.'),
     '',
     '### Strengths',
     ...formatMarkdownList(report.afterActionSummary.strengths, 'No strengths recorded yet.'),
@@ -3759,11 +5170,29 @@ function compareWorkspaceUsers(left: WorkspaceUser, right: WorkspaceUser): numbe
   return left.fullName.localeCompare(right.fullName) || right.updatedAt.localeCompare(left.updatedAt);
 }
 
+function compareWorkspaceInvites(left: WorkspaceInvite, right: WorkspaceInvite): number {
+  if (left.status !== right.status) {
+    const rank = workspaceInviteStatusRank(left.status) - workspaceInviteStatusRank(right.status);
+    if (rank !== 0) return rank;
+  }
+
+  return right.updatedAt.localeCompare(left.updatedAt) || left.email.localeCompare(right.email);
+}
+
+function compareAuditEvents(left: AuditEvent, right: AuditEvent): number {
+  return right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id);
+}
+
 function workspaceRoleRank(role: WorkspaceUserRole): number {
   if (role === 'admin') return 0;
-  if (role === 'facilitator') return 1;
-  if (role === 'manager') return 2;
-  return 3;
+  if (role === 'manager') return 1;
+  return 2;
+}
+
+function workspaceInviteStatusRank(status: WorkspaceInviteStatus): number {
+  if (status === 'pending') return 0;
+  if (status === 'accepted') return 1;
+  return 2;
 }
 
 function findExistingContextItem(contextBuckets: ContextBucket[], bucketId: string, name: string): ContextItem | null {
@@ -3822,6 +5251,10 @@ function mapScenarioDraftRow(row: ScenarioDraftRow): ScenarioDraft {
     difficulty: row.difficulty,
     learningObjectives: row.learningObjectives,
     approvalStatus: row.approvalStatus,
+    reviewerNotes: row.reviewerNotes,
+    reviewedAt: row.reviewedAt,
+    reviewedByUserId: row.reviewedByUserId,
+    reviewedByName: row.reviewedByName,
     scheduledStartAt: row.scheduledStartAt,
     participantsLabel: row.participantsLabel,
     createdAt: row.createdAt,
@@ -3843,6 +5276,11 @@ function mapLaunchRow(row: LaunchRow): Launch {
     learningObjectives: row.learningObjectives,
     tabletopPhase: row.tabletopPhase,
     facilitatorNotes: row.facilitatorNotes,
+    reportCloseoutNotes: row.reportCloseoutNotes,
+    reportFollowUpText: row.reportFollowUpText,
+    reportClosedAt: row.reportClosedAt,
+    reportClosedByUserId: row.reportClosedByUserId,
+    reportClosedByName: row.reportClosedByName,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -3867,9 +5305,98 @@ function mapWorkspaceUserRow(row: WorkspaceUserRow): WorkspaceUser {
     fullName: row.fullName,
     email: row.email,
     role: row.role,
+    capabilities: parseWorkspaceUserCapabilities(row.capabilitiesJson),
+    scopeTeams: parseScopeTeams(row.scopeTeamsJson),
     rosterMemberId: row.rosterMemberId,
     status: row.status,
     updatedAt: row.updatedAt,
+  };
+}
+
+function mapWorkspaceInviteRow(row: WorkspaceInviteRow): WorkspaceInvite {
+  return {
+    id: row.id,
+    email: row.email,
+    fullName: row.fullName,
+    role: row.role,
+    capabilities: parseWorkspaceUserCapabilities(row.capabilitiesJson),
+    scopeTeams: parseScopeTeams(row.scopeTeamsJson),
+    rosterMemberId: row.rosterMemberId,
+    status: row.status,
+    invitedByUserId: row.invitedByUserId,
+    acceptedWorkspaceUserId: row.acceptedWorkspaceUserId,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    acceptedAt: row.acceptedAt,
+    magicLinkSentAt: row.magicLinkSentAt,
+    magicLinkExpiresAt: row.magicLinkExpiresAt,
+  };
+}
+
+function mapAuditEventRow(row: AuditEventRow): AuditEvent {
+  return {
+    id: row.id,
+    category: row.category,
+    action: row.action,
+    targetType: row.targetType,
+    targetId: row.targetId,
+    actorUserId: row.actorUserId,
+    actorName: row.actorName,
+    actorRole: row.actorRole,
+    summary: row.summary,
+    detail: row.detail,
+    createdAt: row.createdAt,
+  };
+}
+
+function parseWorkspaceUserCapabilities(raw: string | null): WorkspaceUserCapability[] {
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isWorkspaceUserCapability);
+  } catch {
+    return [];
+  }
+}
+
+function normalizeWorkspaceUserCapabilities(raw: unknown): WorkspaceUserCapability[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isWorkspaceUserCapability);
+}
+
+function parseScopeTeams(raw: string | null): string[] {
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return normalizeScopeTeams(parsed);
+  } catch {
+    return [];
+  }
+}
+
+function normalizeScopeTeams(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+
+  return Array.from(
+    new Set(
+      raw
+        .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+        .filter((entry) => entry.length > 0),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function mapAuthSessionRow(row: AuthSessionRow): AuthSession {
+  return {
+    id: row.id,
+    workspaceUserId: row.workspaceUserId,
+    expiresAt: row.expiresAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    lastSeenAt: row.lastSeenAt,
   };
 }
 

@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { cors } from 'hono/cors';
 import type {
   AdminNavId,
   AuthSession,
@@ -37,6 +36,7 @@ import type {
   WorkspaceUserRole,
 } from '@resilience/shared';
 import { adminNav, scenarioTemplates } from './config';
+import { buildInviteMagicLinkPath, deliverWorkspaceInviteEmail } from './invite-delivery';
 import {
   buildNativeExtractionProvenance,
   extractSourceDocumentText,
@@ -81,6 +81,13 @@ import {
 export type Bindings = {
   APP_NAME?: string;
   APP_STAGE?: string;
+  APP_ALLOWED_ORIGINS?: string;
+  ALLOW_DEBUG_AUTH?: string;
+  APP_BASE_URL?: string;
+  INVITE_EMAIL_PROVIDER?: string;
+  INVITE_EMAIL_FROM?: string;
+  INVITE_EMAIL_REPLY_TO?: string;
+  RESEND_API_KEY?: string;
   DB?: D1Database;
   AI?: SourceAiBinding;
   SOURCE_DOCUMENTS_BUCKET?: R2Bucket;
@@ -99,20 +106,36 @@ type AppContext = Context<{ Bindings: Bindings }>;
 export function createApp(storeOverride?: ResilienceStore) {
   const app = new Hono<{ Bindings: Bindings }>();
 
-  app.use(
-    '*',
-    cors({
-      origin: '*',
-      allowMethods: ['GET', 'POST', 'PATCH'],
-      allowHeaders: ['Content-Type', 'X-Resilience-User-Id'],
-    }),
-  );
+  app.use('*', async (c, next) => {
+    const origin = c.req.header('Origin');
+    const allowedOrigin = resolveCorsOrigin(c.env, origin);
+
+    if (c.req.method === 'OPTIONS') {
+      if (!allowedOrigin) {
+        return new Response(null, { status: 204 });
+      }
+
+      return new Response(null, {
+        status: 204,
+        headers: buildCorsHeaders(c.env, allowedOrigin),
+      });
+    }
+
+    await next();
+
+    if (!allowedOrigin) {
+      return;
+    }
+
+    const headers = buildCorsHeaders(c.env, allowedOrigin);
+    Object.entries(headers).forEach(([key, value]) => c.header(key, value));
+  });
 
   app.get('/health', (c) =>
     c.json({
       ok: true,
       app: c.env?.APP_NAME ?? 'Altira Resilience',
-      stage: c.env?.APP_STAGE ?? 'scaffold',
+      stage: getAppStage(c.env),
     }),
   );
 
@@ -155,12 +178,13 @@ export function createApp(storeOverride?: ResilienceStore) {
       tokenHash,
       expiresAt,
     });
+    const localRequest = isLocalRequest(c);
 
     setCookie(c, SESSION_COOKIE_NAME, sessionToken, {
       path: '/',
       httpOnly: true,
-      sameSite: 'Lax',
-      secure: isSecureRequest(c),
+      sameSite: localRequest ? 'Lax' : 'None',
+      secure: localRequest ? false : isSecureRequest(c),
       maxAge: AUTH_SESSION_TTL_SECONDS,
       expires: new Date(expiresAt),
     });
@@ -220,12 +244,13 @@ export function createApp(storeOverride?: ResilienceStore) {
       tokenHash: await hashSessionToken(sessionToken),
       expiresAt: isoFromNow(AUTH_SESSION_TTL_SECONDS),
     });
+    const localRequest = isLocalRequest(c);
 
     setCookie(c, SESSION_COOKIE_NAME, sessionToken, {
       path: '/',
       httpOnly: true,
-      sameSite: 'Lax',
-      secure: isSecureRequest(c),
+      sameSite: localRequest ? 'Lax' : 'None',
+      secure: localRequest ? false : isSecureRequest(c),
       maxAge: AUTH_SESSION_TTL_SECONDS,
       expires: new Date(session.expiresAt),
     });
@@ -315,7 +340,7 @@ export function createApp(storeOverride?: ResilienceStore) {
     }
 
     if (file.size > MAX_SOURCE_UPLOAD_BYTES) {
-      return c.json({ error: 'Upload exceeds the 5 MB limit for this slice.' }, 400);
+      return c.json({ error: 'Upload exceeds the 5 MB limit for this preview.' }, 400);
     }
 
     const textExtractable = isInlineTextSourceUpload(mimeType, file.name);
@@ -865,7 +890,13 @@ export function createApp(storeOverride?: ResilienceStore) {
         workspaceInvite,
         magicLinkPath: buildInviteMagicLinkPath(token),
         expiresAt,
-        deliveryMode: 'manual_copy',
+        ...(await deliverWorkspaceInviteEmail({
+          env: c.env,
+          invite: workspaceInvite,
+          token,
+          expiresAt,
+          requestUrl: c.req.url,
+        })),
       },
       201,
     );
@@ -1339,7 +1370,7 @@ async function buildBootstrapPayload(
   ]);
 
   const filteredDocuments =
-    (env?.APP_STAGE ?? 'scaffold') === 'scaffold'
+    isLocalStage(env)
       ? documents.filter((document) => !isPreviewNoiseDocument(document))
       : documents;
   const visibleParticipantRuns = filterParticipantRunsForUser(currentUser, participantRuns, rosterMembers);
@@ -1377,7 +1408,7 @@ async function buildBootstrapPayload(
 
   return {
     appName: env?.APP_NAME ?? 'Altira Resilience',
-    stage: env?.APP_STAGE ?? 'scaffold',
+    stage: getAppStage(env),
     currentUser,
     availableUsers: filterWorkspaceUsersForUser(currentUser, availableUsers, rosterMembers),
     workspaceInvites: visibleWorkspaceInvites,
@@ -1527,7 +1558,66 @@ function buildPreviewAccounts(env: Bindings | undefined, availableUsers: Workspa
 }
 
 function isDebugAuthHeaderAllowed(env: Bindings | undefined): boolean {
-  return (env?.APP_STAGE ?? 'scaffold') !== 'production';
+  return (env?.ALLOW_DEBUG_AUTH ?? '').trim().toLowerCase() === 'true';
+}
+
+function getAppStage(env: Bindings | undefined): string {
+  return env?.APP_STAGE?.trim() || 'local';
+}
+
+function isLocalStage(env: Bindings | undefined): boolean {
+  const stage = getAppStage(env).toLowerCase();
+  return stage === 'local' || stage === 'scaffold';
+}
+
+function resolveCorsOrigin(env: Bindings | undefined, origin: string | undefined): string | null {
+  if (!origin) return null;
+
+  const configuredOrigins = parseAllowedOrigins(env?.APP_ALLOWED_ORIGINS);
+  if (configuredOrigins.length > 0) {
+    return configuredOrigins.includes(origin) ? origin : null;
+  }
+
+  if (isLocalStage(env) && isLoopbackOrigin(origin)) {
+    return origin;
+  }
+
+  return null;
+}
+
+function buildCorsHeaders(env: Bindings | undefined, origin: string): Record<string, string> {
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Credentials': 'true',
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
+    'Access-Control-Allow-Headers': buildCorsAllowHeaders(env).join(', '),
+    'Access-Control-Expose-Headers': 'Content-Disposition, Content-Type, X-Export-Generated-At',
+    Vary: 'Origin',
+  };
+}
+
+function buildCorsAllowHeaders(env: Bindings | undefined): string[] {
+  const headers = ['Content-Type'];
+  if (isDebugAuthHeaderAllowed(env)) {
+    headers.push('X-Resilience-User-Id');
+  }
+  return headers;
+}
+
+function parseAllowedOrigins(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function isLoopbackOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return url.hostname === '127.0.0.1' || url.hostname === 'localhost';
+  } catch {
+    return false;
+  }
 }
 
 function createSessionToken(): string {
@@ -1547,7 +1637,20 @@ function isoFromNow(ttlSeconds: number): string {
 }
 
 function isSecureRequest(c: AppContext): boolean {
+  const forwardedProto = c.req.header('x-forwarded-proto');
+  if (forwardedProto) {
+    return forwardedProto === 'https';
+  }
   return c.req.url.startsWith('https://');
+}
+
+function isLocalRequest(c: AppContext): boolean {
+  try {
+    const hostname = new URL(c.req.url).hostname;
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+  } catch {
+    return false;
+  }
 }
 
 function canAccessNav(role: WorkspaceUserRole, navId: AdminNavId): boolean {
@@ -1979,10 +2082,6 @@ function buildWorkspaceUserAuditDetail(user: WorkspaceUser): string {
 
 function formatAuditScopeTeams(scopeTeams: string[]): string {
   return scopeTeams.length ? scopeTeams.join(', ') : 'no explicit team scope';
-}
-
-function buildInviteMagicLinkPath(token: string): string {
-  return `/?magic_link_token=${encodeURIComponent(token)}`;
 }
 
 function inferMimeTypeFromFileName(fileName: string): string {

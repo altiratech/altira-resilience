@@ -25,6 +25,23 @@ Do not open the preview URL until every item in the `Must Be True` section is sa
 
 If something is partially done but still brittle, treat it as not done.
 
+## Current Progress Snapshot
+
+Already in place locally:
+- sign-in is now labeled `Private Preview`
+- debug auth shortcuts are now gated behind an explicit local-only flag instead of turning on for every non-production stage
+- the demo workspace has been cleaned so participant counts, invite records, and document-review states tell a more coherent firm story
+- provider-backed invite delivery now exists through Resend, with manual-copy fallback preserved when delivery is unavailable or not configured
+- a real Cloudflare-managed preview pair is now staged and validated:
+  - web: `https://altira-resilience-web.pages.dev`
+  - api: `https://altira-resilience-api-preview.rjameson.workers.dev`
+  - real browser sign-in and sign-out have been verified against the staged preview
+
+Still open before deployment:
+- real preview email sender configuration (`RESEND_API_KEY`, sender identity, and deployed `APP_BASE_URL`)
+- bind and validate the public custom domain `resilience.altiratech.com`
+- stronger tenant isolation than the current single curated preview workspace
+
 ## Must Be True
 
 ### 1. Product Experience
@@ -101,7 +118,7 @@ If something is partially done but still brittle, treat it as not done.
 
 ## Strongly Recommended Before Launch
 
-- Provider-backed invite email delivery instead of manual link copy.
+- Provider-backed invite email delivery fully configured in the deployed preview environment instead of relying on manual fallback.
 - A preview feedback form or lightweight issue intake flow.
 - A clean analytics trail for:
   - request access
@@ -130,6 +147,15 @@ When we are ready, the first release should be:
 4. clean demo workspace
 5. public product page remains the discovery layer
 6. `Request access` remains the main public CTA
+
+## Current Staging Posture
+
+Before that public-facing preview bind happens, the safe staging posture is:
+
+1. `https://altira-resilience-web.pages.dev`
+2. API on `https://altira-resilience-api-preview.rjameson.workers.dev`
+3. manual-copy invite fallback still acceptable while sender config is pending
+4. no custom-domain binding until the staged preview remains stable
 
 ## Decision Trigger
 

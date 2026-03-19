@@ -61,7 +61,7 @@ Current state:
   - manager tabletop control only when the specific Resilience capability is present
   - explicit manager team scope, with manager views and evidence filtered to scoped teams instead of defaulting to workspace-wide review
   - real workspace-email sign-in with server-side session cookies mapped onto `workspace_users`
-  - a non-production debug header fallback (`X-Resilience-User-Id`) retained only for tests and local role simulation
+  - a local-only debug header fallback (`X-Resilience-User-Id`) retained only when `ALLOW_DEBUG_AUTH=true` for tests and local role simulation
 - A first real auth/session layer now exists for:
   - `GET /api/v1/auth/session`
   - `POST /api/v1/auth/sign-in`
@@ -71,9 +71,18 @@ Current state:
   - admin-managed workspace users and invite records that sit above roster assignment
   - admin-issued invite magic links with short-lived hashed-token activation for pending workspace invites
   - manual-copy send / resend flow for those invite links from `People`
+  - provider-backed invite email delivery through Resend when preview email settings are configured
+  - manual-copy fallback when provider delivery is unavailable or intentionally disabled
+  - delivery metadata returned to the admin UI so operators can see whether an email was sent or whether a backup link still needs to be shared
+  - browser API requests now support an explicit build-time origin through `VITE_API_URL`, so deployed preview does not silently fall back to the wrong host
   - direct deactivate / reactivate controls for workspace users in `People`
   - revoked invite reopen behavior when the invite email is still free and no other pending invite exists
   - backend guardrails that prevent self-deactivation, self-demotion out of admin, and leaving the workspace with zero active admins
+  - explicit preview hardening so debug auth shortcuts and demo-account switching no longer turn on automatically for every non-production stage
+  - loopback-only fallback CORS for local development, with explicit origin allowlisting reserved for deployed preview environments
+  - preview/prod session cookies now use cross-origin-safe settings (`SameSite=None`) outside local development so a real web origin and API origin can share authenticated browser sessions reliably
+  - a sign-in page now labeled `Private Preview`, with tester-facing invite wording instead of local-build narration
+  - a cleaned demo workspace story with aligned participant counts, resolved document review states, and a distinct pending invite persona
 - A first lightweight audit trail now exists for:
   - access changes across workspace users and invites
   - launch creation and launch-state updates
@@ -104,7 +113,7 @@ Current state:
   - `Exercises` sub-navigation now reads as `Program`, `Scenario Studio`, `Launches`
   - settings and materials surfaces no longer expose platform-stack details or raw object-storage jargon to first-time operators
   - participant home copy is now more action-oriented and less internally framed
-- scaffold-stage bootstrap now filters validation and smoke-test source documents out of the admin preview payload so local product review is not polluted by ingestion-test artifacts
+- local preview bootstrap now filters validation and smoke-test source documents out of the admin preview payload so product review is not polluted by ingestion-test artifacts
 - the default admin landing view now leads with program signals instead of scaffold narration:
   - pending approvals
   - upcoming exercises
@@ -119,9 +128,21 @@ Current state:
 - tabletop launch state is now facilitator-owned at the launch level:
   - launch `status` and `tabletopPhase` remain operator-controlled for tabletop sessions
   - participant runs still drive completion and scoring for assigned individual exercises
-- the local preview now runs on isolated ports so it does not collide with Signal:
-  - web: `http://localhost:5184`
-  - api: `http://localhost:8798`
+- local preview can run on isolated ports so it does not collide with Signal, with explicit debug auth only when `ALLOW_DEBUG_AUTH=true`
+- local preview now carries `APP_BASE_URL=http://127.0.0.1:5195` and `INVITE_EMAIL_PROVIDER=manual_copy` defaults so invite links stay coherent without pretending local review is real outbound email delivery
+- the API now carries a concrete `preview` env block in `apps/api/wrangler.toml` with:
+  - `APP_STAGE=preview`
+  - `APP_BASE_URL=https://altira-resilience-web.pages.dev`
+  - `APP_ALLOWED_ORIGINS=https://altira-resilience-web.pages.dev,https://resilience.altiratech.com`
+  - `INVITE_EMAIL_PROVIDER=resend`
+- the first Cloudflare-managed preview pair is now live at:
+  - web: `https://altira-resilience-web.pages.dev`
+  - api: `https://altira-resilience-api-preview.rjameson.workers.dev`
+- staged preview validation now includes:
+  - deployed API health
+  - real cross-origin sign-in with `SameSite=None` / `Secure` cookie
+  - real browser sign-in to `Overview`
+  - real sign-out back to the `Private Preview` gate
 - local validation passed:
   - `npm run typecheck -w @resilience/api`
   - `npm run test -w @resilience/api`
@@ -131,8 +152,10 @@ Current state:
   - `npm run db:migrate:local -w @resilience/api`
 - current validation note:
   - the direct API typecheck path now completes cleanly again in the repo validation loop
-  - current API test baseline is `46/46`
-- no shared suite auth provider, Google sign-in, enterprise SSO, provider-backed emailed invite delivery, or roster sync yet
+  - current API test baseline is `48/48`
+- no shared suite auth provider, Google sign-in, enterprise SSO, or roster sync yet
+- current deployment blocker:
+  - the staged preview is live, but provider-backed invite email and the public custom domain still need final config
 - real-file validation has now been run on:
   - a real text PDF
   - a real image-only PDF derived from a real PDF
@@ -181,7 +204,7 @@ Implementation work for this product should happen here:
 Move from local product completeness into private-preview readiness:
 - keep the new draft-review and evidence-closeout controls as the governed operator loop
 - keep the current workspace-user administration and invite queue as the local bridge model until shared Altira auth exists
-- add provider-backed invite delivery and tighten the preview/demo workspace so outside testers can navigate without local context
+- keep provider-backed invite delivery on the existing magic-link bridge, and move the remaining work to deployed sender config plus explicit preview-origin discipline
 - keep the visible suite roles simple: `user`, `manager`, `admin`
 - later layer Google sign-in and enterprise SSO onto the same workspace membership model instead of replacing it
 - tighten tenant-safe identity and access boundaries without rewriting evidence history
@@ -193,4 +216,7 @@ Move from local product completeness into private-preview readiness:
 - add the next pre-launch review layer by giving scenario drafts explicit reviewer notes / request-changes handling instead of only `draft -> ready_for_review -> approved`
 - preserve the `upload_ai` vs `queued_ai` provenance split while deeper workflow surfaces are added
 - keep legacy `.doc`, `.xls`, and `.ppt` explicitly unsupported in v1
+- configure real preview email sender settings (`RESEND_API_KEY`, sender identity, `APP_BASE_URL`) before any tester-facing URL is opened
+- deploy the web app with an explicit `VITE_API_URL` and validate the sign-in/session flow against the real preview origin instead of relying on local proxy behavior
+- bind `resilience.altiratech.com` only after the staged Pages/Workers preview stays stable and the invite sender config is in place
 - use `docs/PRIVATE_PREVIEW_LAUNCH_CHECKLIST.md` as the go / no-go gate before opening `resilience.altiratech.com` as a real private-preview URL

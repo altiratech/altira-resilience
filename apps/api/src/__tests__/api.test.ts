@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
   AuditEvent,
+  AuthSessionState,
   BootstrapPayload,
   ContextItem,
   DocumentSummary,
@@ -28,6 +29,11 @@ const managerJsonHeaders = {
   'Content-Type': 'application/json',
   'X-Resilience-User-Id': 'user_kim_manager',
 };
+const localDebugEnv = { APP_STAGE: 'local', ALLOW_DEBUG_AUTH: 'true' } as never;
+
+function withLocalDebugEnv(env?: Record<string, unknown>) {
+  return { APP_STAGE: 'local', ALLOW_DEBUG_AUTH: 'true', ...(env ?? {}) } as never;
+}
 
 describe('Altira Resilience API', () => {
   it('requires sign-in for bootstrap when no session or debug override is present', async () => {
@@ -53,6 +59,7 @@ describe('Altira Resilience API', () => {
     expect(signInPayload.authenticated).toBe(true);
     expect(signInPayload.currentUser?.role).toBe('admin');
     expect(signInResponse.headers.get('set-cookie')).toContain('altira_resilience_session=');
+    expect(signInResponse.headers.get('set-cookie')).toContain('SameSite=Lax');
 
     const cookie = signInResponse.headers.get('set-cookie');
     const sessionResponse = await app.request('/api/v1/auth/session', {
@@ -63,6 +70,36 @@ describe('Altira Resilience API', () => {
     expect(sessionResponse.status).toBe(200);
     expect(sessionPayload.authenticated).toBe(true);
     expect(sessionPayload.currentUser?.email).toBe('dana.smith@altira-demo.local');
+  });
+
+  it('uses cross-site-safe session cookies for preview sign-in', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const signInResponse = await app.request('https://resilience.altiratech.com/api/v1/auth/sign-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'dana.smith@altira-demo.local' }),
+    }, { APP_STAGE: 'preview' } as never);
+
+    expect(signInResponse.status).toBe(201);
+    expect(signInResponse.headers.get('set-cookie')).toContain('SameSite=None');
+    expect(signInResponse.headers.get('set-cookie')).toContain('Secure');
+  });
+
+  it('disables debug auth shortcuts and preview accounts when local debug auth is not explicitly enabled', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const sessionResponse = await app.request('/api/v1/auth/session', {}, { APP_STAGE: 'preview' } as never);
+    const sessionPayload = (await sessionResponse.json()) as AuthSessionState;
+
+    expect(sessionResponse.status).toBe(200);
+    expect(sessionPayload.previewAccounts).toHaveLength(0);
+
+    const bootstrapResponse = await app.request('/api/v1/bootstrap', { headers: adminHeaders }, { APP_STAGE: 'preview' } as never);
+    const bootstrapPayload = (await bootstrapResponse.json()) as { error: string };
+
+    expect(bootstrapResponse.status).toBe(401);
+    expect(bootstrapPayload.error).toContain('Sign in');
   });
 
   it('requires a pending invite to be activated through a magic link instead of plain email sign-in', async () => {
@@ -79,7 +116,7 @@ describe('Altira Resilience API', () => {
         scopeTeams: ['Operations'],
         rosterMemberId: null,
       }),
-    });
+    }, localDebugEnv);
     const invitePayload = (await inviteResponse.json()) as { workspaceInvite: WorkspaceInvite };
 
     expect(inviteResponse.status).toBe(201);
@@ -98,17 +135,22 @@ describe('Altira Resilience API', () => {
     const sendLinkResponse = await app.request(`/api/v1/workspace-invites/${invitePayload.workspaceInvite.id}/send`, {
       method: 'POST',
       headers: adminHeaders,
-    });
+    }, localDebugEnv);
     const sendLinkPayload = (await sendLinkResponse.json()) as {
       workspaceInvite: WorkspaceInvite;
       magicLinkPath: string;
       expiresAt: string;
       deliveryMode: 'manual_copy';
+      deliveryProvider: 'manual_copy';
+      deliverySummary: string;
+      deliveryWarning: string | null;
     };
 
     expect(sendLinkResponse.status).toBe(201);
     expect(sendLinkPayload.workspaceInvite.magicLinkSentAt).not.toBeNull();
     expect(sendLinkPayload.deliveryMode).toBe('manual_copy');
+    expect(sendLinkPayload.deliveryProvider).toBe('manual_copy');
+    expect(sendLinkPayload.deliveryWarning).toBeNull();
 
     const magicLinkUrl = new URL(`http://localhost${sendLinkPayload.magicLinkPath}`);
     const token = magicLinkUrl.searchParams.get('magic_link_token');
@@ -130,9 +172,88 @@ describe('Altira Resilience API', () => {
     expect(consumePayload.currentUser?.scopeTeams).toEqual(['Operations']);
   });
 
+  it('sends invite emails through Resend when provider settings are configured', async () => {
+    const app = createApp(new MemoryResilienceStore());
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ id: 'email_123' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const inviteResponse = await app.request('/api/v1/workspace-invites', {
+        method: 'POST',
+        headers: adminJsonHeaders,
+        body: JSON.stringify({
+          email: 'preview.user@altira-demo.local',
+          fullName: 'Preview User',
+          role: 'user',
+          capabilities: [],
+          scopeTeams: [],
+          rosterMemberId: null,
+        }),
+      }, localDebugEnv);
+      const invitePayload = (await inviteResponse.json()) as { workspaceInvite: WorkspaceInvite };
+
+      expect(inviteResponse.status).toBe(201);
+
+      const sendLinkResponse = await app.request(`/api/v1/workspace-invites/${invitePayload.workspaceInvite.id}/send`, {
+        method: 'POST',
+        headers: adminHeaders,
+      }, withLocalDebugEnv({
+        INVITE_EMAIL_PROVIDER: 'resend',
+        RESEND_API_KEY: 're_test',
+        INVITE_EMAIL_FROM: 'Altira <preview@altira-demo.local>',
+        APP_BASE_URL: 'https://resilience-preview.altiratech.com',
+      }));
+      const sendLinkPayload = (await sendLinkResponse.json()) as {
+        workspaceInvite: WorkspaceInvite;
+        magicLinkPath: string;
+        expiresAt: string;
+        deliveryMode: 'provider_email';
+        deliveryProvider: 'resend';
+        deliverySummary: string;
+        deliveryWarning: string | null;
+      };
+
+      expect(sendLinkResponse.status).toBe(201);
+      expect(sendLinkPayload.deliveryMode).toBe('provider_email');
+      expect(sendLinkPayload.deliveryProvider).toBe('resend');
+      expect(sendLinkPayload.deliverySummary).toContain('preview.user@altira-demo.local');
+      expect(sendLinkPayload.deliveryWarning).toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      const call = fetchMock.mock.calls[0];
+      expect(call).toBeTruthy();
+      const [url, init] = call as unknown as [string, RequestInit];
+      expect(url).toBe('https://api.resend.com/emails');
+      expect(init.method).toBe('POST');
+      expect(init.headers).toMatchObject({
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer re_test',
+      });
+      const body = JSON.parse(String(init.body)) as {
+        from: string;
+        to: string[];
+        subject: string;
+        html: string;
+        text: string;
+      };
+      expect(body.from).toBe('Altira <preview@altira-demo.local>');
+      expect(body.to).toEqual(['preview.user@altira-demo.local']);
+      expect(body.subject).toContain('Altira Resilience');
+      expect(body.html).toContain('https://resilience-preview.altiratech.com/?magic_link_token=');
+      expect(body.text).toContain('https://resilience-preview.altiratech.com/?magic_link_token=');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('returns seeded bootstrap data with launches, reports, and stored source documents', async () => {
     const app = createApp(new MemoryResilienceStore());
-    const response = await app.request('/api/v1/bootstrap', { headers: adminHeaders });
+    const response = await app.request('/api/v1/bootstrap', { headers: adminHeaders }, localDebugEnv);
     const payload = (await response.json()) as BootstrapPayload;
 
     expect(response.status).toBe(200);
@@ -163,7 +284,7 @@ describe('Altira Resilience API', () => {
     expect(payload.reports.length).toBeGreaterThan(0);
   });
 
-  it('filters validation and smoke-test source records from scaffold bootstrap payloads', async () => {
+  it('filters validation and smoke-test source records from local preview bootstrap payloads', async () => {
     const documents: DocumentSummary[] = [
       {
         id: 'doc_customer_continuity',
@@ -200,7 +321,7 @@ describe('Altira Resilience API', () => {
     ];
 
     const app = createApp(new MemoryResilienceStore({ documents, scenarioDrafts: [] }));
-    const response = await app.request('/api/v1/bootstrap', { headers: adminHeaders });
+    const response = await app.request('/api/v1/bootstrap', { headers: adminHeaders }, localDebugEnv);
     const payload = (await response.json()) as BootstrapPayload;
 
     expect(response.status).toBe(200);
@@ -215,7 +336,7 @@ describe('Altira Resilience API', () => {
       method: 'PATCH',
       headers: adminJsonHeaders,
       body: JSON.stringify({ approvalStatus: 'changes_requested', reviewerNotes: '   ' }),
-    });
+    }, localDebugEnv);
     const payload = (await response.json()) as { error: string };
 
     expect(response.status).toBe(400);
@@ -232,7 +353,7 @@ describe('Altira Resilience API', () => {
         approvalStatus: 'changes_requested',
         reviewerNotes: 'Add the first 30 minute communications owner handoff before launch.',
       }),
-    });
+    }, localDebugEnv);
     const reviewPayload = (await reviewResponse.json()) as { draft: ScenarioDraft };
 
     expect(reviewResponse.status).toBe(200);
@@ -241,7 +362,7 @@ describe('Altira Resilience API', () => {
     expect(reviewPayload.draft.reviewedByName).toBe('Dana Smith');
     expect(reviewPayload.draft.reviewedAt).toBeTruthy();
 
-    const bootstrapResponse = await app.request('/api/v1/bootstrap', { headers: adminHeaders });
+    const bootstrapResponse = await app.request('/api/v1/bootstrap', { headers: adminHeaders }, localDebugEnv);
     const bootstrapPayload = (await bootstrapResponse.json()) as BootstrapPayload;
 
     expect(bootstrapResponse.status).toBe(200);
@@ -256,7 +377,7 @@ describe('Altira Resilience API', () => {
     const app = createApp(new MemoryResilienceStore());
     const response = await app.request('/api/v1/bootstrap', {
       headers: { 'X-Resilience-User-Id': 'user_jordan_participant' },
-    });
+    }, localDebugEnv);
     const payload = (await response.json()) as BootstrapPayload;
 
     expect(response.status).toBe(200);
@@ -277,7 +398,7 @@ describe('Altira Resilience API', () => {
 
     const bootstrapResponse = await app.request('/api/v1/bootstrap', {
       headers: managerHeaders,
-    });
+    }, localDebugEnv);
     const bootstrapPayload = (await bootstrapResponse.json()) as BootstrapPayload;
 
     expect(bootstrapResponse.status).toBe(200);
@@ -290,12 +411,12 @@ describe('Altira Resilience API', () => {
 
     const forbiddenRunResponse = await app.request('/api/v1/participant-runs/run_vendor_exec_coo', {
       headers: managerHeaders,
-    });
+    }, localDebugEnv);
     expect(forbiddenRunResponse.status).toBe(403);
 
     const allowedRunResponse = await app.request('/api/v1/participant-runs/run_kim_ops', {
       headers: managerHeaders,
-    });
+    }, localDebugEnv);
     expect(allowedRunResponse.status).toBe(200);
 
     const outOfScopeAssignResponse = await app.request('/api/v1/participant-runs/team-assignments', {
@@ -306,7 +427,7 @@ describe('Altira Resilience API', () => {
         team: 'Security',
         dueAt: '2026-03-27',
       }),
-    });
+    }, localDebugEnv);
     expect(outOfScopeAssignResponse.status).toBe(403);
 
     const scopedAssignResponse = await app.request('/api/v1/participant-runs/team-assignments', {
@@ -317,7 +438,7 @@ describe('Altira Resilience API', () => {
         team: 'Operations',
         dueAt: '2026-03-27',
       }),
-    });
+    }, localDebugEnv);
     const scopedAssignPayload = (await scopedAssignResponse.json()) as {
       createdRuns: ParticipantRun[];
       skippedExistingCount: number;
@@ -330,7 +451,7 @@ describe('Altira Resilience API', () => {
 
     const reportResponse = await app.request('/api/v1/reports/launch_vendor_tabletop_exec', {
       headers: managerHeaders,
-    });
+    }, localDebugEnv);
     const reportPayload = (await reportResponse.json()) as { report: ReportDetail };
 
     expect(reportResponse.status).toBe(200);
@@ -349,7 +470,7 @@ describe('Altira Resilience API', () => {
         followUpText: 'Confirm ownership',
         markClosed: true,
       }),
-    });
+    }, localDebugEnv);
     const payload = (await response.json()) as { error: string };
 
     expect(response.status).toBe(403);
@@ -361,7 +482,7 @@ describe('Altira Resilience API', () => {
 
     const sourceResponse = await app.request('/api/v1/source-documents', {
       headers: { 'X-Resilience-User-Id': 'user_jordan_participant' },
-    });
+    }, localDebugEnv);
     const sourcePayload = (await sourceResponse.json()) as { error: string };
 
     expect(sourceResponse.status).toBe(403);
@@ -376,7 +497,7 @@ describe('Altira Resilience API', () => {
       body: JSON.stringify({
         firstAction: 'Escalate to the incident commander and log the outage scope.',
       }),
-    });
+    }, localDebugEnv);
     const updateRunPayload = (await updateRunResponse.json()) as { run: ParticipantRun };
 
     expect(updateRunResponse.status).toBe(200);
@@ -391,7 +512,7 @@ describe('Altira Resilience API', () => {
       body: JSON.stringify({
         notes: 'Attempting to edit another participant run.',
       }),
-    });
+    }, localDebugEnv);
 
     expect(forbiddenRunResponse.status).toBe(403);
   });
@@ -409,7 +530,7 @@ describe('Altira Resilience API', () => {
         tabletopPhase: 'injects',
         facilitatorNotes: 'Drive communications ownership before moving to the next inject.',
       }),
-    });
+    }, localDebugEnv);
     const facilitatorPayload = (await facilitatorResponse.json()) as { launch: Launch };
 
     expect(facilitatorResponse.status).toBe(200);
@@ -427,7 +548,7 @@ describe('Altira Resilience API', () => {
       body: JSON.stringify({
         tabletopPhase: 'after_action',
       }),
-    });
+    }, localDebugEnv);
 
     expect(managerResponse.status).toBe(403);
   });
@@ -446,7 +567,7 @@ describe('Altira Resilience API', () => {
         managerName: 'Morgan Avery',
         status: 'active',
       }),
-    });
+    }, localDebugEnv);
     const createRosterPayload = (await createRosterResponse.json()) as { rosterMember: RosterMember };
 
     expect(createRosterResponse.status).toBe(201);
@@ -461,6 +582,7 @@ describe('Altira Resilience API', () => {
           team: 'Enterprise Resilience',
         }),
       },
+      localDebugEnv,
     );
     const updateRosterPayload = (await updateRosterResponse.json()) as { rosterMember: RosterMember };
 
@@ -475,7 +597,7 @@ describe('Altira Resilience API', () => {
         rosterMemberId: createRosterPayload.rosterMember.id,
         dueAt: '2026-03-20',
       }),
-    });
+    }, localDebugEnv);
     const assignPayload = (await assignResponse.json()) as { run: ParticipantRun };
 
     expect(assignResponse.status).toBe(201);
@@ -501,7 +623,7 @@ describe('Altira Resilience API', () => {
         rosterMemberId: null,
         status: 'active',
       }),
-    });
+    }, localDebugEnv);
     const createPayload = (await createResponse.json()) as { workspaceUser: WorkspaceUser };
 
     expect(createResponse.status).toBe(201);
@@ -515,7 +637,7 @@ describe('Altira Resilience API', () => {
         capabilities: ['resilience_tabletop_facilitate'],
         scopeTeams: ['Enterprise Resilience'],
       }),
-    });
+    }, localDebugEnv);
     const updatePayload = (await updateResponse.json()) as { workspaceUser: WorkspaceUser };
 
     expect(updateResponse.status).toBe(200);
@@ -539,7 +661,7 @@ describe('Altira Resilience API', () => {
         rosterMemberId: null,
         status: 'active',
       }),
-    });
+    }, localDebugEnv);
     const createPayload = (await createResponse.json()) as { workspaceUser: WorkspaceUser };
 
     expect(createResponse.status).toBe(201);
@@ -548,7 +670,7 @@ describe('Altira Resilience API', () => {
       method: 'PATCH',
       headers: adminJsonHeaders,
       body: JSON.stringify({ status: 'inactive' }),
-    });
+    }, localDebugEnv);
     const deactivatePayload = (await deactivateResponse.json()) as { workspaceUser: WorkspaceUser };
 
     expect(deactivateResponse.status).toBe(200);
@@ -558,7 +680,7 @@ describe('Altira Resilience API', () => {
       method: 'PATCH',
       headers: adminJsonHeaders,
       body: JSON.stringify({ status: 'active' }),
-    });
+    }, localDebugEnv);
     const reactivatePayload = (await reactivateResponse.json()) as { workspaceUser: WorkspaceUser };
 
     expect(reactivateResponse.status).toBe(200);
@@ -572,7 +694,7 @@ describe('Altira Resilience API', () => {
       method: 'PATCH',
       headers: adminJsonHeaders,
       body: JSON.stringify({ status: 'inactive' }),
-    });
+    }, localDebugEnv);
     const deactivatePayload = (await deactivateResponse.json()) as { error: string };
 
     expect(deactivateResponse.status).toBe(400);
@@ -582,7 +704,7 @@ describe('Altira Resilience API', () => {
       method: 'PATCH',
       headers: adminJsonHeaders,
       body: JSON.stringify({ role: 'manager' }),
-    });
+    }, localDebugEnv);
     const demotePayload = (await demoteResponse.json()) as { error: string };
 
     expect(demoteResponse.status).toBe(400);
@@ -603,7 +725,7 @@ describe('Altira Resilience API', () => {
         scopeTeams: ['Operations'],
         rosterMemberId: null,
       }),
-    });
+    }, localDebugEnv);
     const createPayload = (await createResponse.json()) as { workspaceInvite: WorkspaceInvite };
 
     expect(createResponse.status).toBe(201);
@@ -613,7 +735,7 @@ describe('Altira Resilience API', () => {
       method: 'PATCH',
       headers: adminJsonHeaders,
       body: JSON.stringify({ status: 'revoked' }),
-    });
+    }, localDebugEnv);
     const revokePayload = (await revokeResponse.json()) as { workspaceInvite: WorkspaceInvite };
 
     expect(revokeResponse.status).toBe(200);
@@ -623,7 +745,7 @@ describe('Altira Resilience API', () => {
       method: 'PATCH',
       headers: adminJsonHeaders,
       body: JSON.stringify({ status: 'pending' }),
-    });
+    }, localDebugEnv);
     const reopenPayload = (await reopenResponse.json()) as { workspaceInvite: WorkspaceInvite };
 
     expect(reopenResponse.status).toBe(200);
@@ -646,13 +768,13 @@ describe('Altira Resilience API', () => {
         rosterMemberId: null,
         status: 'active',
       }),
-    });
+    }, localDebugEnv);
 
     expect(createResponse.status).toBe(201);
 
     const auditResponse = await app.request('/api/v1/audit-events?limit=3', {
       headers: adminHeaders,
-    });
+    }, localDebugEnv);
     const auditPayload = (await auditResponse.json()) as { auditEvents: AuditEvent[] };
 
     expect(auditResponse.status).toBe(200);
@@ -661,7 +783,7 @@ describe('Altira Resilience API', () => {
 
     const forbiddenResponse = await app.request('/api/v1/audit-events', {
       headers: managerHeaders,
-    });
+    }, localDebugEnv);
 
     expect(forbiddenResponse.status).toBe(403);
   });
@@ -676,7 +798,7 @@ describe('Altira Resilience API', () => {
         tabletopPhase: 'injects',
         facilitatorNotes: 'Communications ownership remained unclear after the second inject.',
       }),
-    });
+    }, localDebugEnv);
     const patchPayload = (await patchResponse.json()) as { launch: Launch };
 
     expect(patchResponse.status).toBe(200);
@@ -686,7 +808,7 @@ describe('Altira Resilience API', () => {
 
     const detailResponse = await app.request('/api/v1/launches/launch_vendor_tabletop_exec', {
       headers: adminHeaders,
-    });
+    }, localDebugEnv);
     const detailPayload = (await detailResponse.json()) as { launch: Launch };
 
     expect(detailResponse.status).toBe(200);
@@ -727,7 +849,7 @@ Escalation Roles:
       method: 'POST',
       headers: adminHeaders,
       body: formData,
-    });
+    }, localDebugEnv);
     const uploadPayload = (await uploadResponse.json()) as { document: SourceDocumentDetail };
 
     expect(uploadResponse.status).toBe(201);
@@ -738,7 +860,7 @@ Escalation Roles:
     const applyResponse = await app.request(`/api/v1/source-suggestions/${suggestion.id}/apply`, {
       method: 'POST',
       headers: adminHeaders,
-    });
+    }, localDebugEnv);
     const applyPayload = (await applyResponse.json()) as { suggestion: SourceExtractionSuggestion; item: ContextItem | null };
 
     expect(applyResponse.status).toBe(200);
@@ -773,7 +895,7 @@ Escalation Roles:
         headers: adminHeaders,
         body: formData,
       },
-      { SOURCE_DOCUMENTS_BUCKET: fakeBucket } as never,
+      withLocalDebugEnv({ SOURCE_DOCUMENTS_BUCKET: fakeBucket }),
     );
     const uploadPayload = (await uploadResponse.json()) as { document: SourceDocumentDetail };
 
@@ -801,7 +923,7 @@ Escalation Roles:
       method: 'POST',
       headers: adminHeaders,
       body: formData,
-    });
+    }, localDebugEnv);
     const payload = (await uploadResponse.json()) as { error: string };
 
     expect(uploadResponse.status).toBe(400);
@@ -831,7 +953,7 @@ Escalation Roles:
         headers: adminHeaders,
         body: formData,
       },
-      { SOURCE_DOCUMENTS_BUCKET: fakeBucket } as never,
+      withLocalDebugEnv({ SOURCE_DOCUMENTS_BUCKET: fakeBucket }),
     );
     const payload = (await uploadResponse.json()) as { document: SourceDocumentDetail };
 
@@ -867,7 +989,7 @@ Escalation Roles:
         headers: adminHeaders,
         body: formData,
       },
-      { SOURCE_DOCUMENTS_BUCKET: fakeBucket, SOURCE_EXTRACTION_QUEUE: fakeQueue } as never,
+      withLocalDebugEnv({ SOURCE_DOCUMENTS_BUCKET: fakeBucket, SOURCE_EXTRACTION_QUEUE: fakeQueue }),
     );
     const payload = (await uploadResponse.json()) as { document: SourceDocumentDetail };
 
@@ -902,7 +1024,7 @@ Escalation Roles:
         headers: adminHeaders,
         body: formData,
       },
-      { SOURCE_DOCUMENTS_BUCKET: fakeBucket, SOURCE_EXTRACTION_QUEUE: fakeQueue } as never,
+      withLocalDebugEnv({ SOURCE_DOCUMENTS_BUCKET: fakeBucket, SOURCE_EXTRACTION_QUEUE: fakeQueue }),
     );
     const payload = (await uploadResponse.json()) as { document: SourceDocumentDetail };
 
@@ -938,7 +1060,7 @@ Escalation Roles:
         headers: adminHeaders,
         body: formData,
       },
-      {
+      withLocalDebugEnv({
         SOURCE_DOCUMENTS_BUCKET: fakeBucket,
         SOURCE_EXTRACTION_QUEUE: fakeQueue,
         AI: createFakeAi({
@@ -946,7 +1068,7 @@ Escalation Roles:
             'The document appears to be a scanned continuity plan. The top section contains a title and the bottom section contains narrative paragraphs.',
           visionResponse: 'Teams: Security\nVendors: Okta\nEscalation Roles: Incident Commander',
         }),
-      } as never,
+      }),
     );
     const payload = (await uploadResponse.json()) as { document: SourceDocumentDetail };
 
@@ -1012,7 +1134,7 @@ Escalation Roles:
     const response = await app.request(
       `/api/v1/source-documents/${seedDocument.id}/extract`,
       { method: 'POST', headers: adminHeaders },
-      { SOURCE_DOCUMENTS_BUCKET: fakeBucket } as never,
+      withLocalDebugEnv({ SOURCE_DOCUMENTS_BUCKET: fakeBucket }),
     );
     const payload = (await response.json()) as { document: SourceDocumentDetail };
 
@@ -1036,7 +1158,7 @@ Escalation Roles:
         startsAt: '2026-03-21',
         participantsLabel: '12 assignees',
       }),
-    });
+    }, localDebugEnv);
     const launchPayload = (await launchResponse.json()) as { launch: Launch };
 
     expect(launchResponse.status).toBe(201);
@@ -1051,7 +1173,7 @@ Escalation Roles:
         participantRole: 'Operations Analyst',
         dueAt: '2026-03-21',
       }),
-    });
+    }, localDebugEnv);
     const runPayload = (await runResponse.json()) as { run: ParticipantRun };
 
     expect(runResponse.status).toBe(201);
@@ -1066,7 +1188,7 @@ Escalation Roles:
       method: 'PATCH',
       headers: adminJsonHeaders,
       body: JSON.stringify({ reviewState: 'confirmed' }),
-    });
+    }, localDebugEnv);
     const contextPayload = (await contextResponse.json()) as { item: ContextItem };
 
     expect(contextResponse.status).toBe(200);
@@ -1076,7 +1198,7 @@ Escalation Roles:
       method: 'PATCH',
       headers: adminJsonHeaders,
       body: JSON.stringify({ approvalStatus: 'approved' }),
-    });
+    }, localDebugEnv);
     const draftPayload = (await draftResponse.json()) as { draft: ScenarioDraft };
 
     expect(draftResponse.status).toBe(200);
@@ -1093,7 +1215,7 @@ Escalation Roles:
         policyAcknowledged: true,
         status: 'submitted',
       }),
-    });
+    }, localDebugEnv);
     const runPayload = (await runResponse.json()) as { run: ParticipantRun };
 
     expect(runResponse.status).toBe(200);
@@ -1102,7 +1224,7 @@ Escalation Roles:
 
     const reportResponse = await app.request('/api/v1/reports/launch_q2_cyber_wave1', {
       headers: adminHeaders,
-    });
+    }, localDebugEnv);
     const reportPayload = (await reportResponse.json()) as { report: ReportDetail };
 
     expect(reportResponse.status).toBe(200);
@@ -1119,7 +1241,7 @@ Escalation Roles:
         followUpText: 'Update the vendor escalation matrix\nConfirm policy wording for after-action note capture',
         markClosed: true,
       }),
-    });
+    }, localDebugEnv);
     const closeoutPayload = (await closeoutResponse.json()) as { report: ReportDetail };
 
     expect(closeoutResponse.status).toBe(200);
@@ -1131,7 +1253,7 @@ Escalation Roles:
 
     const markdownExportResponse = await app.request('/api/v1/reports/launch_q2_cyber_wave1/export?format=markdown', {
       headers: adminHeaders,
-    });
+    }, localDebugEnv);
     const markdownExport = await markdownExportResponse.text();
 
     expect(markdownExportResponse.status).toBe(200);
@@ -1144,7 +1266,7 @@ Escalation Roles:
 
     const jsonExportResponse = await app.request('/api/v1/reports/launch_q2_cyber_wave1/export?format=json', {
       headers: adminHeaders,
-    });
+    }, localDebugEnv);
     const jsonExport = JSON.parse(await jsonExportResponse.text()) as ReportEvidencePackage;
 
     expect(jsonExportResponse.status).toBe(200);

@@ -39,6 +39,10 @@ import type {
   WorkspaceUserPatch,
 } from '@resilience/shared';
 
+// Empty string in local dev so Vite proxying can stay simple.
+// Explicit full origin in preview/prod so the browser never guesses.
+const API_BASE = import.meta.env.VITE_API_URL?.trim() ?? '';
+
 export async function getBootstrap(): Promise<BootstrapPayload> {
   return requestJson<BootstrapPayload>('/api/v1/bootstrap');
 }
@@ -81,7 +85,7 @@ export async function createSourceDocument(input: SourceDocumentInput): Promise<
 }
 
 export async function uploadSourceDocument(formData: FormData): Promise<SourceDocumentDetail> {
-  const response = await fetch('/api/v1/source-documents/upload', {
+  const response = await fetch(api('/api/v1/source-documents/upload'), {
     method: 'POST',
     body: formData,
     credentials: 'include',
@@ -316,7 +320,7 @@ export async function updateReportReview(
 }
 
 export async function exportReport(launchId: string, format: ReportExportFormat): Promise<ReportExportFile> {
-  const response = await fetch(`/api/v1/reports/${launchId}/export?format=${format}`, {
+  const response = await fetch(api(`/api/v1/reports/${launchId}/export?format=${format}`), {
     credentials: 'include',
   });
 
@@ -334,7 +338,7 @@ export async function exportReport(launchId: string, format: ReportExportFormat)
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(api(path), {
     headers: {
       'Content-Type': 'application/json',
       ...(init?.headers ?? {}),
@@ -348,6 +352,14 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+function api(path: string): string {
+  if (!API_BASE) {
+    return path;
+  }
+
+  return `${API_BASE.replace(/\/$/, '')}${path}`;
 }
 
 async function buildRequestError(response: Response): Promise<RequestError> {

@@ -237,7 +237,10 @@ export type WorkspaceInviteMagicLinkResult = {
   workspaceInvite: WorkspaceInvite;
   magicLinkPath: string;
   expiresAt: string;
-  deliveryMode: 'manual_copy';
+  deliveryMode: 'manual_copy' | 'provider_email';
+  deliveryProvider: 'manual_copy' | 'resend';
+  deliverySummary: string;
+  deliveryWarning: string | null;
 };
 
 export type PreviewAuthAccount = {

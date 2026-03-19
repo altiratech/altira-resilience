@@ -184,6 +184,8 @@ const fallbackAvailableUsers: WorkspaceUser[] = [
   },
 ];
 const fallbackCurrentUser = fallbackAvailableUsers[0];
+const SESSION_SETTLE_ATTEMPTS = 4;
+const SESSION_SETTLE_DELAY_MS = 150;
 
 const navCopy: Record<AdminNavId, { title: string; description: string }> = {
   home: {
@@ -527,6 +529,7 @@ function App() {
         clearMagicLinkTokenFromUrl();
         setAuthState(session);
         setSignInForm({ email: session.currentUser?.email ?? '' });
+        await settleAuthenticatedSession(session);
         await reloadBootstrap({ preserveErrorState: true });
         return;
       }
@@ -660,6 +663,10 @@ function App() {
       setAuthState(session);
       setSignInForm({ email: session.currentUser?.email ?? email });
       resetShellState();
+      const settledSession = await settleAuthenticatedSession(session);
+      if (!settledSession.authenticated || !settledSession.session) {
+        throw new Error('Sign-in succeeded, but the browser did not finish establishing the session. Retry once or allow cookies for this preview.');
+      }
       await reloadBootstrap();
     });
   }
@@ -696,6 +703,32 @@ function App() {
     if (options?.participantRunId) {
       await openParticipantRun(options.participantRunId, true);
     }
+  }
+
+  async function settleAuthenticatedSession(initialState: AuthSessionState): Promise<AuthSessionState> {
+    let latestState = initialState;
+
+    if (initialState.authenticated && initialState.session) {
+      return initialState;
+    }
+
+    for (let attempt = 0; attempt < SESSION_SETTLE_ATTEMPTS; attempt += 1) {
+      const sessionState = await getAuthSessionState().catch(() => null);
+      if (sessionState) {
+        latestState = sessionState;
+        setAuthState(sessionState);
+      }
+
+      if (sessionState?.authenticated && sessionState.session) {
+        return sessionState;
+      }
+
+      if (attempt < SESSION_SETTLE_ATTEMPTS - 1) {
+        await delay(SESSION_SETTLE_DELAY_MS * (attempt + 1));
+      }
+    }
+
+    return latestState;
   }
 
   function startNewDraftFromTemplate(template: ScenarioTemplate) {
@@ -1744,10 +1777,10 @@ function SignInPanel({
   return (
     <div className="auth-shell">
       <section className="auth-panel auth-panel-primary">
-        <div className="eyebrow">Altira</div>
-        <h1>Resilience</h1>
+        <div className="eyebrow">Altira Resilience</div>
+        <h1>Private Preview</h1>
         <p>Rehearse the incidents your policies assume you can handle.</p>
-        <p className="subtle">Use your workspace email to open exercises, review evidence, and run the readiness program.</p>
+        <p className="subtle">Invited workspace users can sign in to run exercises, review evidence, and manage the readiness program.</p>
 
         {error ? <div className="notice notice-error">{error}</div> : null}
 
@@ -1784,8 +1817,8 @@ function SignInPanel({
         {previewAccounts.length ? (
           <>
             <div className="panel-spacer" />
-            <h4>Preview workspace</h4>
-            <p className="subtle">Use a local demo account to review the product flow.</p>
+            <h4>Local review access</h4>
+            <p className="subtle">These demo accounts are available only in local development.</p>
             <div className="auth-account-list">
               {previewAccounts.map((account) => (
                 <button
@@ -2528,8 +2561,8 @@ function WorkspaceAccessPanel({
         <div className="panel">
           <div className="panel-header">
             <div>
-              <h3>Invite queue</h3>
-              <p>Pending invites let admins stage access before a workspace user exists. Signing in with the invited email provisions the user automatically in this slice.</p>
+            <h3>Invite queue</h3>
+              <p>Pending invites let admins stage access before a workspace user exists. Invited users activate access through a time-limited sign-in link.</p>
             </div>
           </div>
           {workspaceInvites.length ? (
@@ -2718,10 +2751,17 @@ function WorkspaceAccessPanel({
           {latestInviteMagicLink ? (
             <>
               <div className="panel-spacer" />
-              <h4>Latest magic link</h4>
+              <h4>{latestInviteMagicLink.deliveryMode === 'provider_email' ? 'Invite delivery' : 'Share invite link'}</h4>
               <div className="notice">
-                <strong>{buildMagicLinkUrl(latestInviteMagicLink.magicLinkPath)}</strong>
-                <div className="table-note">Manual copy mode · expires {formatDate(latestInviteMagicLink.expiresAt)}</div>
+                <strong>{latestInviteMagicLink.deliverySummary}</strong>
+                <div className="table-note">
+                  Backup link: {buildMagicLinkUrl(latestInviteMagicLink.magicLinkPath)}
+                  {' · '}
+                  expires {formatDate(latestInviteMagicLink.expiresAt)}
+                </div>
+                {latestInviteMagicLink.deliveryWarning ? (
+                  <div className="table-note">{latestInviteMagicLink.deliveryWarning}</div>
+                ) : null}
               </div>
               <div className="button-row">
                 <button
@@ -2731,7 +2771,7 @@ function WorkspaceAccessPanel({
                     void navigator.clipboard.writeText(buildMagicLinkUrl(latestInviteMagicLink.magicLinkPath));
                   }}
                 >
-                  Copy link
+                  {latestInviteMagicLink.deliveryMode === 'provider_email' ? 'Copy backup link' : 'Copy link'}
                 </button>
               </div>
             </>
@@ -3782,7 +3822,7 @@ function RosterPanel({
             <p>
               {canEditRoster
                 ? 'Keep the directory lean and operational. This is the assignment source for launches, not a general HR system.'
-                : 'Managers can review the directory for their scoped teams here, but directory edits remain an admin workflow in this slice.'}
+                : 'Managers can review the directory for their scoped teams here, but directory edits remain an admin workflow.'}
             </p>
           </div>
           {canEditRoster && selectedRosterMemberId ? (
@@ -5676,6 +5716,10 @@ function clearMagicLinkTokenFromUrl() {
 
 function buildMagicLinkUrl(path: string): string {
   return new URL(path, window.location.origin).toString();
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 function formatBucketLabel(bucketId: string): string {

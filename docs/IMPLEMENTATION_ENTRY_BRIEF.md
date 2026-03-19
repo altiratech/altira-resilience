@@ -84,9 +84,19 @@ The current implemented foundation is:
 41. a first persisted audit-event layer now records access changes, launch changes, assignment creation, and participant submission, and surfaces recent admin-visible activity in `Overview` and `People`
 42. evidence packages now support admin-authored closeout notes, operator follow-up actions, and explicit `closed` state on top of the existing derived after-action and export flow
 43. the first-impression UX pass now removes most internal scaffold/platform language from sign-in, materials, and settings, and tightens `Exercises` sub-navigation to `Program`, `Scenario Studio`, and `Launches`
-44. scaffold-stage bootstrap now filters validation and smoke-test source documents out of the admin preview payload so local product review stays coherent
+44. local preview bootstrap now filters validation and smoke-test source documents out of the admin preview payload so product review stays coherent
 45. scenario drafts now support reviewer notes, a real `changes_requested` path, persisted review metadata, and audit events for submission/approval/rework actions
 46. the program overview and exercises pipeline now show review-ready drafts separately from drafts blocked for changes
+47. preview hardening now requires an explicit local-only flag before debug auth shortcuts or demo-account switching appear, instead of enabling them for every non-production stage
+48. API CORS now falls back to loopback-only origins in local development and expects explicit allowlisting for any deployed preview origin
+49. the sign-in and invite surfaces now speak as a `Private Preview`, and the seeded demo workspace now uses aligned participant counts, distinct invite identity, and resolved document-review states
+50. admin invite delivery now supports provider-backed email through Resend when preview email settings are configured, while preserving manual-copy fallback as the safe bridge path
+51. invite-send responses and the `People` UI now expose delivery metadata so operators can tell whether an email was sent or whether they still need to share a backup link manually
+52. the web client now supports a build-time API origin through `VITE_API_URL`, so deployed preview can target an explicit API host instead of assuming same-origin `/api`
+53. preview/prod session cookies now switch to `SameSite=None` outside local development so a real web origin and API origin can share authenticated browser sessions cleanly
+54. `apps/api/wrangler.toml` now carries a concrete `preview` env block for `APP_STAGE`, `APP_BASE_URL`, `APP_ALLOWED_ORIGINS`, and `INVITE_EMAIL_PROVIDER`
+55. the first Cloudflare-managed preview pair is now live on `https://altira-resilience-web.pages.dev` with API `https://altira-resilience-api-preview.rjameson.workers.dev`
+56. deployed preview validation now covers real sign-in, authenticated Overview load, and sign-out in the browser instead of only local Vite review
 
 Runtime split now fixed:
 - individual exercise runs remain participant-owned and deterministically scored
@@ -100,7 +110,7 @@ Why:
 ## Immediate Next Build Block
 
 1. keep the new workspace-user admin, invite flow, and manager team-scope model as the bridge layer until shared Altira auth exists
-2. add provider-backed invite delivery and a cleaner tester-facing access flow on top of the existing magic-link bridge
+2. keep provider-backed invite delivery on top of the existing magic-link bridge, and wire real preview sender config before outside testers depend on it
 3. keep the new membership-lifecycle controls operator-owned and decide whether manager scope should stay admin-managed only or gain a request / approval flow
 4. keep the new audit trail lightweight and operator-readable rather than widening it into a full approval engine too early
 5. keep the provider/versioning/provenance boundary in `docs/AI_DOCUMENT_BOUNDARY.md` as the rule for future ingestion work
@@ -110,6 +120,10 @@ Why:
 9. keep the current workspace-email sign-in for active users plus invite-based magic-link activation for pending invites as the bridge until shared Altira auth exists, then layer Google / SSO onto the same model
 10. preserve the new buyer-facing readiness-OS IA rather than drifting back toward implementation-shaped navigation
 11. keep the preview/demo workspace coherent so first-look product reviews are not polluted by validation artifacts, test fixtures, or internal build-state copy
+12. keep deployed preview access on explicit origins only, with debug auth shortcuts disabled unless a local-only flag is intentionally turned on
+13. configure a real preview email sender, preview base URL, and deployed cookie/origin behavior before opening a tester-facing domain
+14. deploy the web app with an explicit `VITE_API_URL` and validate browser sign-in/session behavior on a real preview origin instead of relying on local proxy behavior
+15. keep the current Pages + workers.dev staging pair stable before binding `resilience.altiratech.com`
 
 ## Canonical Inputs
 

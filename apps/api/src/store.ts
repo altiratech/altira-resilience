@@ -1301,8 +1301,8 @@ const seedDocuments: DocumentSummary[] = [
     storageBackend: 'inline',
     uploadedFileName: 'continuity-plan-2026.md',
     byteSize: 482,
-    extractionStatus: 'ready_for_review',
-    pendingSuggestionCount: 2,
+    extractionStatus: 'reviewed',
+    pendingSuggestionCount: 0,
     updatedAt: '2026-03-01T10:00:00.000Z',
   },
   {
@@ -1333,8 +1333,8 @@ const seedDocuments: DocumentSummary[] = [
     storageBackend: 'inline',
     uploadedFileName: 'ir-playbook.md',
     byteSize: 426,
-    extractionStatus: 'ready_for_review',
-    pendingSuggestionCount: 2,
+    extractionStatus: 'reviewed',
+    pendingSuggestionCount: 0,
     updatedAt: '2026-03-05T10:00:00.000Z',
   },
 ];
@@ -1361,7 +1361,7 @@ Escalation Roles:
     contentExcerpt:
       'Teams: Operations, Compliance. Critical Vendors: Identity Provider, Primary Custodian. Escalation Roles: Incident Commander, Executive Sponsor.',
     extractionNote: null,
-    extractionStatus: 'ready_for_review',
+    extractionStatus: 'reviewed',
     extractionMethod: 'upload_native',
     extractionProvider: 'native_parser',
     extractionVersion: 'native-parser-2026-03-09',
@@ -1390,7 +1390,7 @@ Teams:
     contentExcerpt:
       'Escalation Roles: Incident Commander, Communications Lead. Vendors: Okta, Communications Platform. Teams: Security, Operations.',
     extractionNote: null,
-    extractionStatus: 'ready_for_review',
+    extractionStatus: 'reviewed',
     extractionMethod: 'upload_native',
     extractionProvider: 'native_parser',
     extractionVersion: 'native-parser-2026-03-09',
@@ -1408,7 +1408,7 @@ const seedSuggestions: SourceExtractionSuggestion[] = [
     name: 'Identity Provider',
     sourceSnippet: 'Critical Vendors: Identity Provider',
     confidence: 'high',
-    status: 'pending_review',
+    status: 'applied',
   },
   {
     id: 'suggestion_continuity_exec_sponsor',
@@ -1417,7 +1417,7 @@ const seedSuggestions: SourceExtractionSuggestion[] = [
     name: 'Executive Sponsor',
     sourceSnippet: 'Escalation Roles: Executive Sponsor',
     confidence: 'high',
-    status: 'pending_review',
+    status: 'dismissed',
   },
   {
     id: 'suggestion_ir_okta',
@@ -1426,7 +1426,7 @@ const seedSuggestions: SourceExtractionSuggestion[] = [
     name: 'Okta',
     sourceSnippet: 'Vendors: Okta',
     confidence: 'high',
-    status: 'pending_review',
+    status: 'dismissed',
   },
   {
     id: 'suggestion_ir_comms_lead',
@@ -1435,7 +1435,7 @@ const seedSuggestions: SourceExtractionSuggestion[] = [
     name: 'Communications Lead',
     sourceSnippet: 'Escalation Roles: Communications Lead',
     confidence: 'high',
-    status: 'pending_review',
+    status: 'applied',
   },
 ];
 
@@ -1485,7 +1485,7 @@ const seedScenarioDrafts: ScenarioDraft[] = [
     reviewedByUserId: 'user_dana_admin',
     reviewedByName: 'Dana Smith',
     scheduledStartAt: '2026-03-18',
-    participantsLabel: '48 assignees',
+    participantsLabel: '2 assignees',
     createdAt: '2026-03-02T09:00:00.000Z',
     updatedAt: '2026-03-06T14:00:00.000Z',
   },
@@ -1503,7 +1503,7 @@ const seedScenarioDrafts: ScenarioDraft[] = [
     reviewedByUserId: 'user_dana_admin',
     reviewedByName: 'Dana Smith',
     scheduledStartAt: '2026-03-27',
-    participantsLabel: '8 leaders',
+    participantsLabel: '2 leaders',
     createdAt: '2026-03-04T12:00:00.000Z',
     updatedAt: '2026-03-08T18:00:00.000Z',
   },
@@ -1622,8 +1622,8 @@ const seedAuthSessions: AuthSessionRow[] = [];
 const seedWorkspaceInvites: WorkspaceInvite[] = [
   {
     id: 'invite_taylor_observer',
-    email: 'taylor.observer@altira-demo.local',
-    fullName: 'Taylor Observer',
+    email: 'riley.chen@altira-demo.local',
+    fullName: 'Riley Chen',
     role: 'user',
     capabilities: [],
     scopeTeams: [],
@@ -1701,8 +1701,8 @@ const seedAuditEvents: AuditEvent[] = [
     actorUserId: 'user_dana_admin',
     actorName: 'Dana Smith',
     actorRole: 'admin',
-    summary: 'Dana Smith created a workspace invite for Taylor Observer.',
-    detail: 'Invite remains pending until first sign-in.',
+    summary: 'Dana Smith created a workspace invite for Riley Chen.',
+    detail: 'Invite remains pending until Riley activates the time-limited sign-in link.',
     createdAt: '2026-03-16T12:30:00.000Z',
   },
 ];
@@ -1716,7 +1716,7 @@ const seedLaunches: Launch[] = [
     audience: 'Operations + Compliance',
     status: 'in_progress',
     startsAt: '2026-03-18',
-    participantsLabel: '48 assignees',
+    participantsLabel: '2 assignees',
     scenarioBrief:
       'A critical identity provider begins failing across employee authentication and advisor portal access. Participants must decide the first escalation, assess customer impact, and coordinate the internal response using approved procedures.',
     learningObjectives: 'Validate the first escalation actions, vendor coordination path, and cross-functional communication chain.',
@@ -1738,7 +1738,7 @@ const seedLaunches: Launch[] = [
     audience: 'Executive Team',
     status: 'scheduled',
     startsAt: '2026-03-27',
-    participantsLabel: '8 leaders',
+    participantsLabel: '2 leaders',
     scenarioBrief:
       'A primary operations vendor loses regional processing capacity during market hours. The executive team must confirm the first decision path, assign external communications ownership, and determine whether continuity workarounds are sufficient.',
     learningObjectives: 'Pressure test executive decision rights, external communications ownership, and continuity workaround readiness.',

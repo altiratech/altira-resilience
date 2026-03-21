@@ -138,11 +138,40 @@ Current state:
 - the first Cloudflare-managed preview pair is now live at:
   - web: `https://altira-resilience-web.pages.dev`
   - api: `https://altira-resilience-api-preview.rjameson.workers.dev`
+- staged preview auth now runs through same-origin Cloudflare Pages Functions in `apps/web/functions/api/[[path]].ts`, so the browser calls `/api/*` on `altira-resilience-web.pages.dev` and avoids the cross-site cookie drop that showed up against the direct `workers.dev` origin
 - staged preview validation now includes:
   - deployed API health
-  - real cross-origin sign-in with `SameSite=None` / `Secure` cookie
+  - real same-origin sign-in via `https://altira-resilience-web.pages.dev/api/...`
   - real browser sign-in to `Overview`
   - real sign-out back to the `Private Preview` gate
+- the default staged-preview workspace now tells a stronger operational story:
+  - one active individual exercise
+  - one upcoming tabletop
+  - one closed executive evidence package
+  - one live evidence package still in review
+- Scenario Studio now carries a deeper authoring model instead of acting mostly like a template picker:
+  - each draft now persists a trigger event, scenario scope, and evidence focus
+  - each draft now stores the approved materials and confirmed context inputs selected for that exercise
+  - the studio now shows readiness counts, a structured outline, and a launch package summary while the draft is being authored
+- Evidence now opens as a real operator review surface instead of a mostly empty report shell:
+  - report queue rows now show launch posture, participant submission coverage, follow-up load, and closeout state
+  - the default review order now prioritizes open evidence work ahead of closed packages
+  - report detail now leads with review posture, immediate actions, operator closeout state, and export readiness
+  - evidence summary cards now emphasize open follow-up actions instead of abstract aggregate scoring
+- launch/runtime surfaces now read more like one operational loop:
+  - launch queue rows now show runtime posture, submission coverage, evidence posture, and open follow-up load
+  - launch detail now leads with exercise-package posture, evidence posture, immediate actions, and direct evidence/facilitator controls
+  - tabletop control now shows session posture and opens directly into the launch evidence package
+  - participant run detail now exposes launch/program posture so individual exercises no longer feel detached from the broader readiness program
+- `People` now reads more like a readiness-operations surface instead of a pair of isolated admin forms:
+  - the participant directory now shows direct workspace-access posture for each roster member
+  - admins can jump straight from a roster member into workspace access if a participant needs sign-in coverage or invite follow-up
+  - workspace access now shows team-by-team coverage, pending activation load, roster gaps, and workspace-only user cleanup in one place
+- the access/identity layer is now materially safer for preview use:
+  - roster members, workspace users, and pending invites now normalize email identity consistently instead of relying on mixed casing or raw user input
+  - pending invite acceptance now reconciles an existing active workspace user to the staged invite role, scope, capability, and roster link instead of silently leaving stale access in place
+  - `People` now treats active email-matched workspace access as provisional coverage rather than a false gap, while still surfacing those rows as explicit link follow-up for admins
+- launches can now be renamed after creation, so recurring runs from the same approved draft do not collapse into indistinguishable records
 - local validation passed:
   - `npm run typecheck -w @resilience/api`
   - `npm run test -w @resilience/api`
@@ -152,7 +181,8 @@ Current state:
   - `npm run db:migrate:local -w @resilience/api`
 - current validation note:
   - the direct API typecheck path now completes cleanly again in the repo validation loop
-  - current API test baseline is `48/48`
+  - current API test baseline is `50/50`
+  - the local D1 migration can still fail inside the sandbox with a readonly sqlite error, so the live staged-preview data was updated through the real admin/API workflow while the code-side migration remains in the repo for the next authorized remote apply
 - no shared suite auth provider, Google sign-in, enterprise SSO, or roster sync yet
 - current deployment blocker:
   - the staged preview is live, but provider-backed invite email and the public custom domain still need final config
@@ -201,22 +231,22 @@ Implementation work for this product should happen here:
 
 ## Immediate Next Step
 
-Move from local product completeness into private-preview readiness:
-- keep the new draft-review and evidence-closeout controls as the governed operator loop
-- keep the current workspace-user administration and invite queue as the local bridge model until shared Altira auth exists
-- keep provider-backed invite delivery on the existing magic-link bridge, and move the remaining work to deployed sender config plus explicit preview-origin discipline
-- keep the visible suite roles simple: `user`, `manager`, `admin`
+Use the staged preview screenshots as the build order, with completed work marked and the next slice called out clearly:
+- done: make the default workspace feel more like a live readiness program instead of a mostly empty console
+- done: deepen `Scenario Studio` so it now captures trigger, scope, evidence focus, and reviewed source/context selections
+- done: deepen `Evidence` so it now opens with a richer report queue, stronger default review posture, and materially more believable closeout/export context
+- done: strengthen launch/runtime depth so exercises, participant runs, tabletop control, and evidence now feel much more like one operational loop rather than adjacent panels
+- done: tighten `People` so directory, workspace access, and manager/participant operations now feel much more integrated with live readiness work
+- done: tighten identity integrity so duplicate emails, stale invite reconciliation, and false `People` coverage gaps are materially less likely in preview use
+- next: make an explicit call on tenanting before widening preview usage
+  - either keep Resilience intentionally single-workspace for the curated preview period
+  - or start introducing real workspace scoping into persistence before broader suite-style access
+- after that: decide whether `Settings` should become a richer control surface or remain intentionally slim
+- then: keep the staged preview workspace coherent as deeper runtime and evidence stories continue to evolve
+- keep the current workspace-user/invite model as the bridge until shared Altira auth exists
+- keep provider-backed invite delivery and explicit preview-origin discipline in place, but treat them as preview hardening rather than the main product story
+- keep visible suite roles simple: `user`, `manager`, `admin`
 - later layer Google sign-in and enterprise SSO onto the same workspace membership model instead of replacing it
-- tighten tenant-safe identity and access boundaries without rewriting evidence history
-- keep the new membership-lifecycle guardrails simple and operator-owned while deciding whether manager scope should remain admin-managed only or gain a request/approval path
-- keep the new audit trail lightweight and operator-readable instead of widening into a full workflow engine too early
-- keep the new evidence closeout model launch-backed and admin-owned until real pilot workflows force per-team or delegated review semantics
-- treat provider-backed emailed invites as a later layer on top of the current staged invite + magic-link records rather than a separate identity system
-- keep the new manager team-scope model simple and operational, widening it only if real pilot workflows force more complexity
-- add the next pre-launch review layer by giving scenario drafts explicit reviewer notes / request-changes handling instead of only `draft -> ready_for_review -> approved`
 - preserve the `upload_ai` vs `queued_ai` provenance split while deeper workflow surfaces are added
 - keep legacy `.doc`, `.xls`, and `.ppt` explicitly unsupported in v1
-- configure real preview email sender settings (`RESEND_API_KEY`, sender identity, `APP_BASE_URL`) before any tester-facing URL is opened
-- deploy the web app with an explicit `VITE_API_URL` and validate the sign-in/session flow against the real preview origin instead of relying on local proxy behavior
-- bind `resilience.altiratech.com` only after the staged Pages/Workers preview stays stable and the invite sender config is in place
 - use `docs/PRIVATE_PREVIEW_LAUNCH_CHECKLIST.md` as the go / no-go gate before opening `resilience.altiratech.com` as a real private-preview URL

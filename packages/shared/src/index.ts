@@ -153,6 +153,11 @@ export type ScenarioDraft = {
   audience: string;
   launchMode: LaunchMode;
   difficulty: ScenarioDifficulty;
+  triggerEvent: string;
+  scenarioScope: string;
+  evidenceFocus: string;
+  selectedDocumentIds: string[];
+  selectedContextItemIds: string[];
   learningObjectives: string;
   approvalStatus: ScenarioApprovalStatus;
   reviewerNotes: string | null;
@@ -313,7 +318,15 @@ export type LaunchSummary = {
   startsAt: string;
   participantsLabel: string;
   participantCount: number;
+  submittedCount: number;
+  inProgressCount: number;
   completedCount: number;
+  completionRate: number;
+  averageScore: number | null;
+  evidenceStatus: EvidenceStatus;
+  reportStatus: ReportStatus;
+  followUpCount: number;
+  closedAt: string | null;
 };
 
 export type ParticipantRunStatus = 'assigned' | 'in_progress' | 'submitted';
@@ -343,14 +356,30 @@ export type ParticipantRun = {
 
 export type LaunchDetail = Launch & {
   draftApprovalStatus: ScenarioApprovalStatus;
+  participantCount: number;
+  submittedCount: number;
+  inProgressCount: number;
+  completionRate: number;
+  averageScore: number | null;
+  evidenceStatus: EvidenceStatus;
+  reportStatus: ReportStatus;
+  followUpActions: string[];
+  followUpCount: number;
+  closedAt: string | null;
   participantRuns: ParticipantRun[];
 };
 
 export type ParticipantRunDetail = ParticipantRun & {
   launchName: string;
   launchMode: LaunchMode;
+  launchStatus: LaunchStatus;
   audience: string;
   startsAt: string | null;
+  participantCount: number;
+  submittedCount: number;
+  evidenceStatus: EvidenceStatus;
+  reportStatus: ReportStatus;
+  followUpCount: number;
   scenarioBrief: string;
   learningObjectives: string;
 };
@@ -362,10 +391,18 @@ export type EvidenceStatus = 'pending' | 'ready';
 export type ReportSummary = {
   id: string;
   name: string;
+  launchStatus: LaunchStatus;
+  mode: LaunchMode;
+  audience: string;
+  startsAt: string;
+  participantCount: number;
+  submittedCount: number;
   completionRate: number;
   averageScore: number | null;
+  followUpCount: number;
   status: ReportStatus;
   evidenceStatus: EvidenceStatus;
+  closedAt: string | null;
   lastUpdated: string;
 };
 
@@ -391,6 +428,9 @@ export type ReportDetail = {
   mode: LaunchMode;
   audience: string;
   startsAt: string;
+  participantCount: number;
+  submittedCount: number;
+  outstandingCount: number;
   completionRate: number;
   averageScore: number | null;
   status: ReportStatus;
@@ -401,6 +441,8 @@ export type ReportDetail = {
   afterActionSummary: ReportAfterActionSummary;
   closeoutNotes: string;
   followUpActions: string[];
+  followUpCount: number;
+  noteCount: number;
   closedAt: string | null;
   closedByName: string | null;
   evidenceItems: ReportEvidenceItem[];
@@ -495,6 +537,11 @@ export type ScenarioDraftInput = {
   audience: string;
   launchMode: LaunchMode;
   difficulty: ScenarioDifficulty;
+  triggerEvent: string;
+  scenarioScope: string;
+  evidenceFocus: string;
+  selectedDocumentIds: string[];
+  selectedContextItemIds: string[];
   learningObjectives: string;
   approvalStatus: ScenarioApprovalStatus;
   reviewerNotes?: string | null;
@@ -514,6 +561,7 @@ export type LaunchInput = {
 };
 
 export type LaunchPatch = Partial<LaunchInput> & {
+  name?: string;
   tabletopPhase?: TabletopPhase | null;
   facilitatorNotes?: string;
   status?: LaunchStatus;

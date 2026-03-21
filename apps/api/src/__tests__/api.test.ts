@@ -7,6 +7,7 @@ import type {
   DocumentSummary,
   Launch,
   ParticipantRun,
+  ParticipantRunDetail,
   ReportDetail,
   ReportEvidencePackage,
   RosterMember,
@@ -33,6 +34,13 @@ const localDebugEnv = { APP_STAGE: 'local', ALLOW_DEBUG_AUTH: 'true' } as never;
 
 function withLocalDebugEnv(env?: Record<string, unknown>) {
   return { APP_STAGE: 'local', ALLOW_DEBUG_AUTH: 'true', ...(env ?? {}) } as never;
+}
+
+async function hashTokenForTest(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest))
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 describe('Altira Resilience API', () => {
@@ -84,6 +92,28 @@ describe('Altira Resilience API', () => {
     expect(signInResponse.status).toBe(201);
     expect(signInResponse.headers.get('set-cookie')).toContain('SameSite=None');
     expect(signInResponse.headers.get('set-cookie')).toContain('Secure');
+  });
+
+  it('allows Pages preview deployment origins when the project domain is allowlisted', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const response = await app.request('https://altira-resilience-api-preview.rjameson.workers.dev/api/v1/auth/sign-in', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://9c2b152b.altira-resilience-web.pages.dev',
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type',
+      },
+    }, {
+      APP_STAGE: 'preview',
+      APP_ALLOWED_ORIGINS: 'https://altira-resilience-web.pages.dev,https://resilience.altiratech.com',
+    } as never);
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-origin')).toBe(
+      'https://9c2b152b.altira-resilience-web.pages.dev',
+    );
+    expect(response.headers.get('access-control-allow-credentials')).toBe('true');
   });
 
   it('disables debug auth shortcuts and preview accounts when local debug auth is not explicitly enabled', async () => {
@@ -170,6 +200,112 @@ describe('Altira Resilience API', () => {
     expect(consumePayload.currentUser?.role).toBe('manager');
     expect(consumePayload.currentUser?.capabilities).toEqual(['resilience_tabletop_facilitate']);
     expect(consumePayload.currentUser?.scopeTeams).toEqual(['Operations']);
+  });
+
+  it('reconciles an existing active workspace user when a pending invite is accepted', async () => {
+    const store = new MemoryResilienceStore();
+    const app = createApp(store);
+    const rosterMember = await store.createRosterMember({
+      fullName: 'Casey Ops',
+      email: 'casey.ops@altira-demo.local',
+      roleTitle: 'Operations Lead',
+      team: 'Operations',
+      managerName: 'Morgan Avery',
+      status: 'active',
+    });
+
+    const existingUser = await store.createWorkspaceUser({
+      fullName: 'Casey Ops',
+      email: 'casey.ops@altira-demo.local',
+      role: 'user',
+      capabilities: [],
+      scopeTeams: [],
+      rosterMemberId: null,
+      status: 'active',
+    });
+
+    const invite = await store.createWorkspaceInvite({
+      email: 'casey.ops@altira-demo.local',
+      fullName: 'Casey Ops',
+      role: 'manager',
+      capabilities: ['resilience_tabletop_facilitate'],
+      scopeTeams: ['Operations'],
+      rosterMemberId: rosterMember.id,
+      invitedByUserId: 'user_dana_admin',
+    });
+
+    const token = 'casey-invite-token';
+    await store.issueWorkspaceInviteMagicLink(invite.id, {
+      tokenHash: await hashTokenForTest(token),
+      expiresAt: '2026-03-25T10:00:00.000Z',
+    });
+
+    const consumeResponse = await app.request('/api/v1/auth/magic-link/consume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    const consumePayload = (await consumeResponse.json()) as { authenticated: boolean; currentUser: WorkspaceUser | null };
+
+    expect(consumeResponse.status).toBe(201);
+    expect(consumePayload.authenticated).toBe(true);
+    expect(consumePayload.currentUser?.id).toBe(existingUser.id);
+    expect(consumePayload.currentUser?.role).toBe('manager');
+    expect(consumePayload.currentUser?.capabilities).toEqual(['resilience_tabletop_facilitate']);
+    expect(consumePayload.currentUser?.scopeTeams).toEqual(['Operations']);
+    expect(consumePayload.currentUser?.rosterMemberId).toBe(rosterMember.id);
+
+    const bootstrapResponse = await app.request('/api/v1/bootstrap', { headers: adminHeaders }, localDebugEnv);
+    const bootstrapPayload = (await bootstrapResponse.json()) as BootstrapPayload;
+    const reconciledUser = bootstrapPayload.availableUsers.find((user) => user.id === existingUser.id) ?? null;
+    const acceptedInvite = bootstrapPayload.workspaceInvites.find((entry) => entry.id === invite.id) ?? null;
+
+    expect(bootstrapResponse.status).toBe(200);
+    expect(reconciledUser?.rosterMemberId).toBe(rosterMember.id);
+    expect(acceptedInvite?.status).toBe('accepted');
+    expect(bootstrapPayload.auditEvents[0]?.action).toBe('workspace_invite_accepted');
+  });
+
+  it('blocks duplicate roster member emails even when the casing differs', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const response = await app.request('/api/v1/roster-members', {
+      method: 'POST',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({
+        fullName: 'Jordan Clone',
+        email: 'JORDAN.LEE@ALTIRA-DEMO.LOCAL',
+        roleTitle: 'Compliance Officer',
+        team: 'Compliance',
+        managerName: 'Morgan Avery',
+        status: 'active',
+      }),
+    }, localDebugEnv);
+    const payload = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(409);
+    expect(payload.error).toContain('roster member');
+  });
+
+  it('blocks staging a pending invite for a roster member that already has workspace access', async () => {
+    const app = createApp(new MemoryResilienceStore());
+
+    const response = await app.request('/api/v1/workspace-invites', {
+      method: 'POST',
+      headers: adminJsonHeaders,
+      body: JSON.stringify({
+        email: 'security.backup@altira-demo.local',
+        fullName: 'Security Backup',
+        role: 'manager',
+        capabilities: [],
+        scopeTeams: ['Security'],
+        rosterMemberId: 'roster_kim_patel',
+      }),
+    }, localDebugEnv);
+    const payload = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(409);
+    expect(payload.error).toContain('roster member');
   });
 
   it('sends invite emails through Resend when provider settings are configured', async () => {
@@ -278,10 +414,27 @@ describe('Altira Resilience API', () => {
     expect(payload.sourceLibrary.some((document) => document.storageStatus === 'stored')).toBe(true);
     expect(payload.organizationContext.length).toBeGreaterThan(0);
     expect(payload.scenarioDrafts.length).toBeGreaterThan(0);
+    expect(payload.scenarioDrafts.some((draft) => draft.triggerEvent.length > 0)).toBe(true);
+    expect(payload.scenarioDrafts.some((draft) => draft.selectedDocumentIds.length > 0)).toBe(true);
+    expect(payload.scenarioDrafts.some((draft) => draft.selectedContextItemIds.length > 0)).toBe(true);
     expect(payload.rosterMembers.length).toBeGreaterThan(0);
     expect(payload.participantAssignments.length).toBeGreaterThan(0);
     expect(payload.launches.length).toBeGreaterThan(0);
     expect(payload.reports.length).toBeGreaterThan(0);
+    expect(payload.reports[0]?.mode).toBeTruthy();
+    expect(payload.reports[0]?.participantCount).toBeGreaterThan(0);
+    expect(payload.reports[0]?.submittedCount).toBeGreaterThanOrEqual(0);
+    expect(payload.reports[0]?.followUpCount).toBeGreaterThanOrEqual(0);
+    expect(payload.launches[0]?.submittedCount).toBeGreaterThanOrEqual(0);
+    expect(payload.launches[0]?.inProgressCount).toBeGreaterThanOrEqual(0);
+    expect(payload.launches[0]?.evidenceStatus).toBeTruthy();
+    expect(payload.launches[0]?.reportStatus).toBeTruthy();
+    expect(payload.launches.some((launch) => launch.status === 'in_progress')).toBe(true);
+    expect(payload.launches.some((launch) => launch.status === 'scheduled')).toBe(true);
+    expect(payload.reports.some((report) => report.status === 'closed')).toBe(true);
+    expect(payload.overview.upcomingExercises.length).toBeGreaterThan(0);
+    expect(payload.overview.evidenceReady.length).toBeGreaterThan(0);
+    expect(payload.overview.recentAfterActions.length).toBeGreaterThan(0);
   });
 
   it('filters validation and smoke-test source records from local preview bootstrap payloads', async () => {
@@ -1197,12 +1350,26 @@ Escalation Roles:
     const draftResponse = await app.request('/api/v1/scenario-drafts/draft_vendor_tabletop', {
       method: 'PATCH',
       headers: adminJsonHeaders,
-      body: JSON.stringify({ approvalStatus: 'approved' }),
+      body: JSON.stringify({
+        approvalStatus: 'approved',
+        triggerEvent: 'A custodian outage blocks transaction processing before the morning reconciliation window closes.',
+        scenarioScope: 'Focus on the first hour of manual-workaround approval, executive communications, and external escalation ownership.',
+        evidenceFocus: 'Capture continuity decision quality, ownership clarity, and follow-up actions.',
+        selectedDocumentIds: ['doc_continuity_2026', 'doc_vendor_matrix'],
+        selectedContextItemIds: ['team_ops', 'vendor_custodian', 'role_incident_commander'],
+      }),
     }, localDebugEnv);
     const draftPayload = (await draftResponse.json()) as { draft: ScenarioDraft };
 
     expect(draftResponse.status).toBe(200);
     expect(draftPayload.draft.approvalStatus).toBe('approved');
+    expect(draftPayload.draft.triggerEvent).toContain('custodian outage');
+    expect(draftPayload.draft.selectedDocumentIds).toEqual(['doc_continuity_2026', 'doc_vendor_matrix']);
+    expect(draftPayload.draft.selectedContextItemIds).toEqual([
+      'role_incident_commander',
+      'team_ops',
+      'vendor_custodian',
+    ]);
 
     const runResponse = await app.request('/api/v1/participant-runs/run_jordan_compliance', {
       method: 'PATCH',
@@ -1230,8 +1397,22 @@ Escalation Roles:
     expect(reportResponse.status).toBe(200);
     expect(reportPayload.report.completionRate).toBe(100);
     expect(reportPayload.report.evidenceStatus).toBe('ready');
+    expect(reportPayload.report.participantCount).toBe(reportPayload.report.participantRuns.length);
+    expect(reportPayload.report.submittedCount).toBe(reportPayload.report.participantRuns.length);
+    expect(reportPayload.report.followUpCount).toBeGreaterThanOrEqual(0);
     expect(reportPayload.report.afterActionSummary.executiveSummary).toContain('submitted response');
     expect(reportPayload.report.participantRuns.length).toBeGreaterThan(1);
+
+    const runDetailResponse = await app.request('/api/v1/participant-runs/run_jordan_compliance', {
+      headers: adminHeaders,
+    }, localDebugEnv);
+    const runDetailPayload = (await runDetailResponse.json()) as { run: ParticipantRunDetail };
+
+    expect(runDetailResponse.status).toBe(200);
+    expect(runDetailPayload.run.launchStatus).toBe('completed');
+    expect(runDetailPayload.run.submittedCount).toBeGreaterThanOrEqual(1);
+    expect(runDetailPayload.run.evidenceStatus).toBe('ready');
+    expect(runDetailPayload.run.reportStatus).toBe('ready');
 
     const closeoutResponse = await app.request('/api/v1/reports/launch_q2_cyber_wave1/review', {
       method: 'PATCH',

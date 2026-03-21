@@ -161,6 +161,10 @@ export interface ResilienceStore {
   updateParticipantRun(id: string, patch: ParticipantRunPatch): Promise<ParticipantRun | null>;
 }
 
+export function normalizeIdentityEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 type SourceDocumentRow = {
   id: string;
   name: string;
@@ -248,6 +252,11 @@ type ScenarioDraftRow = {
   audience: string;
   launchMode: 'individual' | 'tabletop';
   difficulty: ScenarioDifficulty;
+  triggerEvent: string;
+  scenarioScope: string;
+  evidenceFocus: string;
+  selectedDocumentIdsJson: string | null;
+  selectedContextItemIdsJson: string | null;
   learningObjectives: string;
   approvalStatus: ScenarioApprovalStatus;
   reviewerNotes: string | null;
@@ -598,10 +607,26 @@ export function normalizeScenarioDraftInput(raw: Partial<ScenarioDraftInput>): S
   const audience = readTrimmedString(raw.audience);
   const launchMode = isLaunchMode(raw.launchMode) ? raw.launchMode : null;
   const difficulty = isScenarioDifficulty(raw.difficulty) ? raw.difficulty : null;
+  const triggerEvent = readTrimmedString(raw.triggerEvent);
+  const scenarioScope = readTrimmedString(raw.scenarioScope);
+  const evidenceFocus = readTrimmedString(raw.evidenceFocus);
   const learningObjectives = readTrimmedString(raw.learningObjectives);
   const approvalStatus = isScenarioApprovalStatus(raw.approvalStatus) ? raw.approvalStatus : null;
+  const selectedDocumentIds = normalizeStringList(raw.selectedDocumentIds);
+  const selectedContextItemIds = normalizeStringList(raw.selectedContextItemIds);
 
-  if (!title || !templateId || !audience || !launchMode || !difficulty || !learningObjectives || !approvalStatus) {
+  if (
+    !title ||
+    !templateId ||
+    !audience ||
+    !launchMode ||
+    !difficulty ||
+    !triggerEvent ||
+    !scenarioScope ||
+    !evidenceFocus ||
+    !learningObjectives ||
+    !approvalStatus
+  ) {
     return null;
   }
 
@@ -611,6 +636,11 @@ export function normalizeScenarioDraftInput(raw: Partial<ScenarioDraftInput>): S
     audience,
     launchMode,
     difficulty,
+    triggerEvent,
+    scenarioScope,
+    evidenceFocus,
+    selectedDocumentIds,
+    selectedContextItemIds,
     learningObjectives,
     approvalStatus,
     reviewerNotes: normalizeNullableString(raw.reviewerNotes),
@@ -627,12 +657,20 @@ export function normalizeScenarioDraftPatch(raw: Partial<ScenarioDraftPatch>): S
   const title = readTrimmedString(raw.title);
   const templateId = readTrimmedString(raw.templateId);
   const audience = readTrimmedString(raw.audience);
+  const triggerEvent = readTrimmedString(raw.triggerEvent);
+  const scenarioScope = readTrimmedString(raw.scenarioScope);
+  const evidenceFocus = readTrimmedString(raw.evidenceFocus);
   const learningObjectives = readTrimmedString(raw.learningObjectives);
   if (title) patch.title = title;
   if (templateId) patch.templateId = templateId;
   if (audience) patch.audience = audience;
   if (isLaunchMode(raw.launchMode)) patch.launchMode = raw.launchMode;
   if (isScenarioDifficulty(raw.difficulty)) patch.difficulty = raw.difficulty;
+  if (triggerEvent) patch.triggerEvent = triggerEvent;
+  if (scenarioScope) patch.scenarioScope = scenarioScope;
+  if (evidenceFocus) patch.evidenceFocus = evidenceFocus;
+  if (Array.isArray(raw.selectedDocumentIds)) patch.selectedDocumentIds = normalizeStringList(raw.selectedDocumentIds);
+  if (Array.isArray(raw.selectedContextItemIds)) patch.selectedContextItemIds = normalizeStringList(raw.selectedContextItemIds);
   if (learningObjectives) patch.learningObjectives = learningObjectives;
   if (isScenarioApprovalStatus(raw.approvalStatus)) patch.approvalStatus = raw.approvalStatus;
   if (raw.reviewerNotes === null || typeof raw.reviewerNotes === 'string') {
@@ -669,8 +707,10 @@ export function normalizeLaunchInput(raw: Partial<LaunchInput>): LaunchInput | n
 
 export function normalizeLaunchPatch(raw: Partial<LaunchPatch>): LaunchPatch {
   const patch: LaunchPatch = {};
+  const name = readTrimmedString(raw.name);
   const scenarioDraftId = readTrimmedString(raw.scenarioDraftId);
   const facilitatorNotes = readTrimmedString(raw.facilitatorNotes);
+  if (name) patch.name = name;
   if (scenarioDraftId) patch.scenarioDraftId = scenarioDraftId;
   if (raw.startsAt === null || typeof raw.startsAt === 'string') {
     patch.startsAt = normalizeNullableString(raw.startsAt);
@@ -688,7 +728,7 @@ export function normalizeLaunchPatch(raw: Partial<LaunchPatch>): LaunchPatch {
 
 export function normalizeRosterMemberInput(raw: Partial<RosterMemberInput>): RosterMemberInput | null {
   const fullName = readTrimmedString(raw.fullName);
-  const email = readTrimmedString(raw.email);
+  const email = normalizeIdentityEmailInput(raw.email);
   const roleTitle = readTrimmedString(raw.roleTitle);
   const team = readTrimmedString(raw.team);
   const managerName = normalizeNullableString(raw.managerName);
@@ -711,7 +751,7 @@ export function normalizeRosterMemberInput(raw: Partial<RosterMemberInput>): Ros
 export function normalizeRosterMemberPatch(raw: Partial<RosterMemberPatch>): RosterMemberPatch {
   const patch: RosterMemberPatch = {};
   const fullName = readTrimmedString(raw.fullName);
-  const email = readTrimmedString(raw.email);
+  const email = normalizeIdentityEmailInput(raw.email);
   const roleTitle = readTrimmedString(raw.roleTitle);
   const team = readTrimmedString(raw.team);
 
@@ -729,7 +769,7 @@ export function normalizeRosterMemberPatch(raw: Partial<RosterMemberPatch>): Ros
 
 export function normalizeWorkspaceUserInput(raw: Partial<WorkspaceUserInput>): WorkspaceUserInput | null {
   const fullName = readTrimmedString(raw.fullName);
-  const email = readTrimmedString(raw.email);
+  const email = normalizeIdentityEmailInput(raw.email);
   const role = isWorkspaceUserRole(raw.role) ? raw.role : null;
   const status = isWorkspaceUserStatus(raw.status) ? raw.status : null;
   const rosterMemberId = normalizeNullableString(raw.rosterMemberId);
@@ -754,7 +794,7 @@ export function normalizeWorkspaceUserInput(raw: Partial<WorkspaceUserInput>): W
 export function normalizeWorkspaceUserPatch(raw: Partial<WorkspaceUserPatch>): WorkspaceUserPatch {
   const patch: WorkspaceUserPatch = {};
   const fullName = readTrimmedString(raw.fullName);
-  const email = readTrimmedString(raw.email);
+  const email = normalizeIdentityEmailInput(raw.email);
   if (fullName) patch.fullName = fullName;
   if (email) patch.email = email;
   if (isWorkspaceUserRole(raw.role)) patch.role = raw.role;
@@ -772,7 +812,7 @@ export function normalizeWorkspaceUserPatch(raw: Partial<WorkspaceUserPatch>): W
 }
 
 export function normalizeWorkspaceInviteInput(raw: Partial<WorkspaceInviteInput>): WorkspaceInviteInput | null {
-  const email = readTrimmedString(raw.email);
+  const email = normalizeIdentityEmailInput(raw.email);
   const fullName = readTrimmedString(raw.fullName);
   const role = isWorkspaceUserRole(raw.role) ? raw.role : null;
   const rosterMemberId = normalizeNullableString(raw.rosterMemberId);
@@ -862,13 +902,21 @@ export function buildSummaryCards(
   launches: Launch[],
   participantRuns: ParticipantRun[],
 ): AdminSummaryCard[] {
+  const syncedLaunches = launches.map((launch) =>
+    syncLaunchWithRuns(
+      launch,
+      participantRuns.filter((run) => run.launchId === launch.id),
+    ),
+  );
   const pendingMaterialApprovals = documents.filter(
     (document) => document.parseStatus === 'needs_review' || document.pendingSuggestionCount > 0,
   ).length;
   const pendingDraftApprovals = scenarioDrafts.filter((draft) => draft.approvalStatus === 'ready_for_review').length;
   const requestedChangesDrafts = scenarioDrafts.filter((draft) => draft.approvalStatus === 'changes_requested').length;
-  const reports = buildReports(launches, participantRuns);
-  const activeLaunches = launches.filter((launch) => launch.status === 'scheduled' || launch.status === 'in_progress').length;
+  const reports = buildReports(syncedLaunches, participantRuns);
+  const activeLaunches = syncedLaunches.filter(
+    (launch) => launch.status === 'scheduled' || launch.status === 'in_progress',
+  ).length;
   const overdueAssignments = participantRuns.filter(
     (run) => Boolean(run.dueAt) && run.status !== 'submitted' && run.dueAt! < todayDate(),
   ).length;
@@ -975,7 +1023,8 @@ export function buildLaunches(launches: Launch[], participantRuns: ParticipantRu
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .map((launch) => {
       const runs = runsByLaunch.get(launch.id) ?? [];
-      const completedCount = runs.filter((run) => run.status === 'submitted').length;
+      const metrics = summarizeParticipantRuns(runs);
+      const followUpActions = parseFollowUpActions(launch.reportFollowUpText);
 
       return {
         id: launch.id,
@@ -988,7 +1037,15 @@ export function buildLaunches(launches: Launch[], participantRuns: ParticipantRu
         startsAt: launch.startsAt ?? 'Not scheduled',
         participantsLabel: launch.participantsLabel ?? 'Participants not set',
         participantCount: runs.length,
-        completedCount,
+        submittedCount: metrics.submittedCount,
+        inProgressCount: metrics.inProgressCount,
+        completedCount: metrics.submittedCount,
+        completionRate: metrics.completionRate,
+        averageScore: metrics.averageScore,
+        evidenceStatus: metrics.submittedCount > 0 ? 'ready' : 'pending',
+        reportStatus: deriveReportStatus(launch, metrics),
+        followUpCount: followUpActions.length,
+        closedAt: launch.reportClosedAt,
       };
     });
 }
@@ -1149,19 +1206,28 @@ export function buildReports(launches: Launch[], participantRuns: ParticipantRun
 
       const syncedLaunch = syncLaunchWithRuns(launch, runs);
       const metrics = summarizeParticipantRuns(runs);
+      const followUpActions = parseFollowUpActions(syncedLaunch.reportFollowUpText);
 
       return {
         id: launch.id,
         name: launch.name,
+        launchStatus: syncedLaunch.status,
+        mode: syncedLaunch.mode,
+        audience: syncedLaunch.audience,
+        startsAt: syncedLaunch.startsAt ?? 'Not scheduled',
+        participantCount: metrics.totalCount,
+        submittedCount: metrics.submittedCount,
         completionRate: metrics.completionRate,
         averageScore: metrics.averageScore,
+        followUpCount: followUpActions.length,
         status: deriveReportStatus(syncedLaunch, metrics),
         evidenceStatus: metrics.submittedCount > 0 ? 'ready' : 'pending',
+        closedAt: syncedLaunch.reportClosedAt,
         lastUpdated: syncedLaunch.updatedAt,
       } satisfies ReportSummary;
     })
     .filter((report): report is ReportSummary => report !== null)
-    .sort((left, right) => right.lastUpdated.localeCompare(left.lastUpdated));
+    .sort(compareReportSummaries);
 }
 
 export function buildLaunchDetail(
@@ -1170,21 +1236,47 @@ export function buildLaunchDetail(
   draftApprovalStatus: ScenarioApprovalStatus = 'approved',
 ) {
   const syncedLaunch = syncLaunchWithRuns(launch, participantRuns);
+  const metrics = summarizeParticipantRuns(participantRuns);
+  const followUpActions = parseFollowUpActions(syncedLaunch.reportFollowUpText);
 
   return {
     ...syncedLaunch,
     draftApprovalStatus,
+    participantCount: metrics.totalCount,
+    submittedCount: metrics.submittedCount,
+    inProgressCount: metrics.inProgressCount,
+    completionRate: metrics.completionRate,
+    averageScore: metrics.averageScore,
+    evidenceStatus: metrics.submittedCount > 0 ? 'ready' : 'pending',
+    reportStatus: deriveReportStatus(syncedLaunch, metrics),
+    followUpActions,
+    followUpCount: followUpActions.length,
     participantRuns: participantRuns.slice().sort(compareParticipantRuns),
   };
 }
 
-export function buildParticipantRunDetail(launch: Launch, run: ParticipantRun): ParticipantRunDetail {
+export function buildParticipantRunDetail(
+  launch: Launch,
+  run: ParticipantRun,
+  participantRuns: ParticipantRun[],
+): ParticipantRunDetail {
+  const allRuns = participantRuns.filter((participantRun) => participantRun.launchId === launch.id);
+  const metrics = summarizeParticipantRuns(allRuns);
+  const syncedLaunch = syncLaunchWithRuns(launch, allRuns);
+  const followUpActions = parseFollowUpActions(syncedLaunch.reportFollowUpText);
+
   return {
     ...run,
     launchName: launch.name,
     launchMode: launch.mode,
+    launchStatus: syncedLaunch.status,
     audience: launch.audience,
     startsAt: launch.startsAt,
+    participantCount: metrics.totalCount,
+    submittedCount: metrics.submittedCount,
+    evidenceStatus: metrics.submittedCount > 0 ? 'ready' : 'pending',
+    reportStatus: deriveReportStatus(syncedLaunch, metrics),
+    followUpCount: followUpActions.length,
     scenarioBrief: launch.scenarioBrief,
     learningObjectives: launch.learningObjectives,
   };
@@ -1193,6 +1285,8 @@ export function buildParticipantRunDetail(launch: Launch, run: ParticipantRun): 
 export function buildReportDetail(launch: Launch, participantRuns: ParticipantRun[]): ReportDetail {
   const syncedLaunch = syncLaunchWithRuns(launch, participantRuns);
   const metrics = summarizeParticipantRuns(participantRuns);
+  const noteCount = participantRuns.filter((run) => Boolean(readTrimmedString(run.notes))).length;
+  const followUpActions = parseFollowUpActions(launch.reportFollowUpText);
   const highlightNotes = buildReportHighlights(syncedLaunch, participantRuns, metrics);
   const afterActionSummary = buildAfterActionSummary(syncedLaunch, participantRuns, metrics);
   const evidenceItems = buildEvidenceItems(participantRuns, metrics);
@@ -1205,6 +1299,9 @@ export function buildReportDetail(launch: Launch, participantRuns: ParticipantRu
     mode: launch.mode,
     audience: launch.audience,
     startsAt: launch.startsAt ?? 'Not scheduled',
+    participantCount: metrics.totalCount,
+    submittedCount: metrics.submittedCount,
+    outstandingCount: metrics.totalCount - metrics.submittedCount,
     completionRate: metrics.completionRate,
     averageScore: metrics.averageScore,
     status: deriveReportStatus(syncedLaunch, metrics),
@@ -1214,7 +1311,9 @@ export function buildReportDetail(launch: Launch, participantRuns: ParticipantRu
     highlights: highlightNotes,
     afterActionSummary,
     closeoutNotes: launch.reportCloseoutNotes,
-    followUpActions: parseFollowUpActions(launch.reportFollowUpText),
+    followUpActions,
+    followUpCount: followUpActions.length,
+    noteCount,
     closedAt: launch.reportClosedAt,
     closedByName: launch.reportClosedByName,
     evidenceItems,
@@ -1478,6 +1577,11 @@ const seedScenarioDrafts: ScenarioDraft[] = [
     audience: 'Operations + Compliance',
     launchMode: 'individual',
     difficulty: 'medium',
+    triggerEvent: 'Suspicious identity-provider outage and endpoint credential reset requests begin hitting operations during market open.',
+    scenarioScope: 'First-hour response across Operations, Compliance, and Security with vendor coordination and customer-impact triage.',
+    evidenceFocus: 'Escalation timing, vendor handoff, policy acknowledgement, and impact-assessment quality.',
+    selectedDocumentIds: ['doc_ir_playbook', 'doc_continuity_2026'],
+    selectedContextItemIds: ['team_ops', 'team_compliance', 'vendor_okta', 'role_incident_commander'],
     learningObjectives: 'Validate the first escalation actions, vendor coordination path, and cross-functional communication chain.',
     approvalStatus: 'approved',
     reviewerNotes: 'Approved for the next operations wave once vendor-contact ownership is confirmed in launch notes.',
@@ -1496,6 +1600,11 @@ const seedScenarioDrafts: ScenarioDraft[] = [
     audience: 'Executive Team',
     launchMode: 'tabletop',
     difficulty: 'high',
+    triggerEvent: 'A core vendor outage interrupts transaction processing and forces a manual-workaround decision before client reporting deadlines.',
+    scenarioScope: 'Executive tabletop covering continuity workaround approval, external communications, and cross-functional escalation ownership.',
+    evidenceFocus: 'Decision-right clarity, continuity workaround approval path, and leadership communications sequencing.',
+    selectedDocumentIds: ['doc_continuity_2026', 'doc_vendor_matrix'],
+    selectedContextItemIds: ['team_ops', 'vendor_custodian', 'role_incident_commander'],
     learningObjectives: 'Pressure test executive decisions, comms ownership, and manual-workaround escalation.',
     approvalStatus: 'approved',
     reviewerNotes: 'Approved for facilitator-led use after executive briefing materials were refreshed.',
@@ -1514,6 +1623,11 @@ const seedScenarioDrafts: ScenarioDraft[] = [
     audience: 'Executive Team',
     launchMode: 'tabletop',
     difficulty: 'high',
+    triggerEvent: 'The firm loses a core provider while inbound client and regulator questions start arriving before the executive team has aligned on the message.',
+    scenarioScope: 'Leadership-only rehearsal of executive message ownership, regulator notification posture, and communications handoff during the first 30 minutes.',
+    evidenceFocus: 'Named communications owner, regulator/customer sequencing, and explicit executive handoff moments.',
+    selectedDocumentIds: ['doc_continuity_2026', 'doc_vendor_matrix'],
+    selectedContextItemIds: ['team_compliance', 'vendor_custodian', 'role_incident_commander'],
     learningObjectives: 'Confirm who owns executive messaging, customer updates, and regulator escalation when the firm loses a core provider.',
     approvalStatus: 'changes_requested',
     reviewerNotes: 'Tighten the first 30 minutes of decision flow and add explicit communications owner handoff before resubmitting.',
@@ -1641,6 +1755,19 @@ const seedWorkspaceInvites: WorkspaceInvite[] = [
 
 const seedAuditEvents: AuditEvent[] = [
   {
+    id: 'audit_operations_submission_kim_q2',
+    category: 'operations',
+    action: 'participant_run_submitted',
+    targetType: 'participant_run',
+    targetId: 'run_kim_ops',
+    actorUserId: 'user_dana_admin',
+    actorName: 'Dana Smith',
+    actorRole: 'admin',
+    summary: 'Kim Patel submitted evidence for Q2 Cyber Escalation Drill.',
+    detail: 'Operations response scored 100% and highlighted a vendor handoff gap between security and operations.',
+    createdAt: '2026-03-18T14:30:00.000Z',
+  },
+  {
     id: 'audit_access_admin_created_kim',
     category: 'access',
     action: 'workspace_user_created',
@@ -1693,6 +1820,19 @@ const seedAuditEvents: AuditEvent[] = [
     createdAt: '2026-03-12T15:00:00.000Z',
   },
   {
+    id: 'audit_operations_vendor_closeout',
+    category: 'operations',
+    action: 'launch_updated',
+    targetType: 'launch',
+    targetId: 'launch_vendor_tabletop_q1_review',
+    actorUserId: 'user_dana_admin',
+    actorName: 'Dana Smith',
+    actorRole: 'admin',
+    summary: 'Dana Smith closed the evidence package for Executive Vendor Outage Tabletop - Q1 Review.',
+    detail: 'Closeout captured leadership gaps, follow-up actions, and an approved after-action package.',
+    createdAt: '2026-03-10T16:30:00.000Z',
+  },
+  {
     id: 'audit_access_invite_taylor',
     category: 'access',
     action: 'workspace_invite_created',
@@ -1728,7 +1868,7 @@ const seedLaunches: Launch[] = [
     reportClosedByUserId: null,
     reportClosedByName: null,
     createdAt: '2026-03-06T18:00:00.000Z',
-    updatedAt: '2026-03-07T12:00:00.000Z',
+    updatedAt: '2026-03-18T14:30:00.000Z',
   },
   {
     id: 'launch_vendor_tabletop_exec',
@@ -1753,6 +1893,32 @@ const seedLaunches: Launch[] = [
     createdAt: '2026-03-08T18:00:00.000Z',
     updatedAt: '2026-03-08T18:00:00.000Z',
   },
+  {
+    id: 'launch_vendor_tabletop_q1_review',
+    scenarioDraftId: 'draft_vendor_tabletop',
+    name: 'Executive Vendor Outage Tabletop - Q1 Review',
+    mode: 'tabletop',
+    audience: 'Executive Team',
+    status: 'completed',
+    startsAt: '2026-03-05',
+    participantsLabel: '2 leaders',
+    scenarioBrief:
+      'Leadership reviewed a quarter-end vendor disruption exercise focused on failover authority, customer communications, and whether manual continuity workarounds could be sustained through market close.',
+    learningObjectives:
+      'Confirm executive decision rights, manual-workaround thresholds, and who owns external communications when a core vendor disruption extends past the first operating window.',
+    tabletopPhase: 'after_action',
+    facilitatorNotes:
+      'Leadership aligned quickly once the communications owner was named, but the trigger for escalating from manual workaround to broader client communication remained too loose.',
+    reportCloseoutNotes:
+      'Executive ownership became clear once the communications lead was named. The team still needs a firmer trigger for moving from manual workaround mode into external communications and board-level escalation.',
+    reportFollowUpText:
+      'Publish a one-page executive decision checklist for critical vendor outages.\nDocument the trigger for moving from manual workarounds to external client communications.',
+    reportClosedAt: '2026-03-10T16:30:00.000Z',
+    reportClosedByUserId: 'user_dana_admin',
+    reportClosedByName: 'Dana Smith',
+    createdAt: '2026-03-05T14:00:00.000Z',
+    updatedAt: '2026-03-10T16:30:00.000Z',
+  },
 ];
 
 const seedParticipantRuns: ParticipantRun[] = [
@@ -1761,7 +1927,7 @@ const seedParticipantRuns: ParticipantRun[] = [
     launchId: 'launch_q2_cyber_wave1',
     rosterMemberId: 'roster_kim_patel',
     participantName: 'Kim Patel',
-    participantEmail: 'kim.patel@altira-demo.local',
+    participantEmail: 'kim.patel@altira-demo.com',
     participantRole: 'Operations Manager',
     participantTeam: 'Operations',
     status: 'submitted',
@@ -1773,17 +1939,17 @@ const seedParticipantRuns: ParticipantRun[] = [
     scorePercent: 100,
     requiredActionsCompleted: 4,
     totalRequiredActions: 4,
-    dueAt: '2026-03-18',
-    startedAt: '2026-03-07T11:00:00.000Z',
-    submittedAt: '2026-03-07T12:00:00.000Z',
-    updatedAt: '2026-03-07T12:00:00.000Z',
+    dueAt: '2026-03-21',
+    startedAt: '2026-03-18T13:45:00.000Z',
+    submittedAt: '2026-03-18T14:30:00.000Z',
+    updatedAt: '2026-03-18T14:30:00.000Z',
   },
   {
     id: 'run_jordan_compliance',
     launchId: 'launch_q2_cyber_wave1',
     rosterMemberId: 'roster_jordan_lee',
     participantName: 'Jordan Lee',
-    participantEmail: 'jordan.lee@altira-demo.local',
+    participantEmail: 'jordan.lee@altira-demo.com',
     participantRole: 'Compliance Officer',
     participantTeam: 'Compliance',
     status: 'assigned',
@@ -1795,17 +1961,17 @@ const seedParticipantRuns: ParticipantRun[] = [
     scorePercent: null,
     requiredActionsCompleted: 0,
     totalRequiredActions: 4,
-    dueAt: '2026-03-18',
+    dueAt: '2026-03-21',
     startedAt: null,
     submittedAt: null,
-    updatedAt: '2026-03-07T09:00:00.000Z',
+    updatedAt: '2026-03-18T09:00:00.000Z',
   },
   {
     id: 'run_vendor_exec_coo',
     launchId: 'launch_vendor_tabletop_exec',
     rosterMemberId: 'roster_morgan_avery',
     participantName: 'Morgan Avery',
-    participantEmail: 'morgan.avery@altira-demo.local',
+    participantEmail: 'morgan.avery@altira-demo.com',
     participantRole: 'Chief Operating Officer',
     participantTeam: 'Executive',
     status: 'assigned',
@@ -1827,7 +1993,7 @@ const seedParticipantRuns: ParticipantRun[] = [
     launchId: 'launch_vendor_tabletop_exec',
     rosterMemberId: 'roster_taylor_brooks',
     participantName: 'Taylor Brooks',
-    participantEmail: 'taylor.brooks@altira-demo.local',
+    participantEmail: 'taylor.brooks@altira-demo.com',
     participantRole: 'Chief Information Security Officer',
     participantTeam: 'Security',
     status: 'assigned',
@@ -1843,6 +2009,50 @@ const seedParticipantRuns: ParticipantRun[] = [
     startedAt: null,
     submittedAt: null,
     updatedAt: '2026-03-08T18:00:00.000Z',
+  },
+  {
+    id: 'run_vendor_review_coo',
+    launchId: 'launch_vendor_tabletop_q1_review',
+    rosterMemberId: 'roster_morgan_avery',
+    participantName: 'Morgan Avery',
+    participantEmail: 'morgan.avery@altira-demo.com',
+    participantRole: 'Chief Operating Officer',
+    participantTeam: 'Executive',
+    status: 'submitted',
+    firstAction: 'Confirm whether vendor failover authority remains with operations or requires executive approval before customer impact widens.',
+    escalationChoice: 'Executive Sponsor',
+    impactAssessment: 'Regional processing slowdown can be held manually for one window, but customer communications ownership becomes time-critical if the outage extends.',
+    notes: 'The team aligned quickly after naming the communications owner, but the trigger for broader customer updates needs to be codified.',
+    policyAcknowledged: true,
+    scorePercent: 92,
+    requiredActionsCompleted: 4,
+    totalRequiredActions: 4,
+    dueAt: '2026-03-05',
+    startedAt: '2026-03-05T15:00:00.000Z',
+    submittedAt: '2026-03-05T15:45:00.000Z',
+    updatedAt: '2026-03-05T15:45:00.000Z',
+  },
+  {
+    id: 'run_vendor_review_ciso',
+    launchId: 'launch_vendor_tabletop_q1_review',
+    rosterMemberId: 'roster_taylor_brooks',
+    participantName: 'Taylor Brooks',
+    participantEmail: 'taylor.brooks@altira-demo.com',
+    participantRole: 'Chief Information Security Officer',
+    participantTeam: 'Security',
+    status: 'submitted',
+    firstAction: 'Confirm that the outage is operational rather than malicious, then hand off the customer-impact threshold to the executive team.',
+    escalationChoice: 'Executive Sponsor',
+    impactAssessment: 'No malicious activity is present, but the extended vendor outage would force manual workarounds and time-sensitive client messaging.',
+    notes: 'Security ownership was clear, but the move from internal outage management to external communications still needs a firmer trigger.',
+    policyAcknowledged: true,
+    scorePercent: 84,
+    requiredActionsCompleted: 4,
+    totalRequiredActions: 4,
+    dueAt: '2026-03-05',
+    startedAt: '2026-03-05T15:05:00.000Z',
+    submittedAt: '2026-03-05T15:50:00.000Z',
+    updatedAt: '2026-03-05T15:50:00.000Z',
   },
 ];
 
@@ -2234,6 +2444,7 @@ export class MemoryResilienceStore implements ResilienceStore {
     const member: RosterMember = {
       id: crypto.randomUUID(),
       ...input,
+      email: normalizeIdentityEmail(input.email),
       updatedAt: timestamp,
     };
 
@@ -2245,7 +2456,10 @@ export class MemoryResilienceStore implements ResilienceStore {
     const member = this.rosterMembers.find((entry) => entry.id === id);
     if (!member) return null;
 
-    Object.assign(member, patch, { updatedAt: nowIso() });
+    Object.assign(member, patch, {
+      email: patch.email ? normalizeIdentityEmail(patch.email) : member.email,
+      updatedAt: nowIso(),
+    });
     return structuredClone(member);
   }
 
@@ -2259,7 +2473,7 @@ export class MemoryResilienceStore implements ResilienceStore {
   }
 
   async getWorkspaceUserByEmail(email: string): Promise<WorkspaceUser | null> {
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedEmail = normalizeIdentityEmail(email);
     const user = this.workspaceUsers.find((entry) => entry.email.trim().toLowerCase() === normalizedEmail);
     return user ? structuredClone(user) : null;
   }
@@ -2268,7 +2482,7 @@ export class MemoryResilienceStore implements ResilienceStore {
     const user: WorkspaceUser = {
       id: crypto.randomUUID(),
       fullName: input.fullName,
-      email: input.email,
+      email: normalizeIdentityEmail(input.email),
       role: input.role,
       capabilities: input.capabilities,
       scopeTeams: input.scopeTeams,
@@ -2286,6 +2500,7 @@ export class MemoryResilienceStore implements ResilienceStore {
     if (!user) return null;
 
     Object.assign(user, patch, {
+      email: patch.email ? normalizeIdentityEmail(patch.email) : user.email,
       capabilities: patch.capabilities ?? user.capabilities,
       scopeTeams: patch.scopeTeams ?? user.scopeTeams,
       updatedAt: nowIso(),
@@ -2301,7 +2516,7 @@ export class MemoryResilienceStore implements ResilienceStore {
     const timestamp = nowIso();
     const invite: WorkspaceInvite = {
       id: crypto.randomUUID(),
-      email: input.email,
+      email: normalizeIdentityEmail(input.email),
       fullName: input.fullName,
       role: input.role,
       capabilities: input.capabilities,
@@ -2376,7 +2591,7 @@ export class MemoryResilienceStore implements ResilienceStore {
   }
 
   async getPendingWorkspaceInviteByEmail(email: string): Promise<WorkspaceInvite | null> {
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedEmail = normalizeIdentityEmail(email);
     const invite = this.workspaceInvites.find(
       (entry) => entry.status === 'pending' && entry.email.trim().toLowerCase() === normalizedEmail,
     );
@@ -2542,6 +2757,7 @@ export class MemoryResilienceStore implements ResilienceStore {
       launch.scenarioBrief = buildScenarioBrief(replacementDraft);
     }
 
+    launch.name = patch.name ?? launch.name;
     launch.startsAt = patch.startsAt === undefined ? launch.startsAt : patch.startsAt;
     launch.participantsLabel = patch.participantsLabel === undefined ? launch.participantsLabel : patch.participantsLabel;
     launch.status = patch.status ?? deriveBaseLaunchStatus(launch.startsAt);
@@ -3278,6 +3494,8 @@ export class D1ResilienceStore implements ResilienceStore {
   async listScenarioDrafts(): Promise<ScenarioDraft[]> {
     const result = await this.db.prepare(
       `SELECT id, title, template_id AS templateId, audience, launch_mode AS launchMode, difficulty,
+              trigger_event AS triggerEvent, scenario_scope AS scenarioScope, evidence_focus AS evidenceFocus,
+              selected_document_ids_json AS selectedDocumentIdsJson, selected_context_item_ids_json AS selectedContextItemIdsJson,
               learning_objectives AS learningObjectives, approval_status AS approvalStatus,
               reviewer_notes AS reviewerNotes, reviewed_at AS reviewedAt,
               reviewed_by_user_id AS reviewedByUserId, reviewed_by_name AS reviewedByName,
@@ -3293,6 +3511,8 @@ export class D1ResilienceStore implements ResilienceStore {
   async getScenarioDraft(id: string): Promise<ScenarioDraft | null> {
     const row = await this.db.prepare(
       `SELECT id, title, template_id AS templateId, audience, launch_mode AS launchMode, difficulty,
+              trigger_event AS triggerEvent, scenario_scope AS scenarioScope, evidence_focus AS evidenceFocus,
+              selected_document_ids_json AS selectedDocumentIdsJson, selected_context_item_ids_json AS selectedContextItemIdsJson,
               learning_objectives AS learningObjectives, approval_status AS approvalStatus,
               reviewer_notes AS reviewerNotes, reviewed_at AS reviewedAt,
               reviewed_by_user_id AS reviewedByUserId, reviewed_by_name AS reviewedByName,
@@ -3320,10 +3540,11 @@ export class D1ResilienceStore implements ResilienceStore {
 
     await this.db.prepare(
       `INSERT INTO scenario_drafts (
-        id, title, template_id, audience, launch_mode, difficulty, learning_objectives,
+        id, title, template_id, audience, launch_mode, difficulty, trigger_event, scenario_scope, evidence_focus,
+        selected_document_ids_json, selected_context_item_ids_json, learning_objectives,
         approval_status, reviewer_notes, reviewed_at, reviewed_by_user_id, reviewed_by_name,
         scheduled_start_at, participants_label, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       draft.id,
       draft.title,
@@ -3331,6 +3552,11 @@ export class D1ResilienceStore implements ResilienceStore {
       draft.audience,
       draft.launchMode,
       draft.difficulty,
+      draft.triggerEvent,
+      draft.scenarioScope,
+      draft.evidenceFocus,
+      JSON.stringify(draft.selectedDocumentIds),
+      JSON.stringify(draft.selectedContextItemIds),
       draft.learningObjectives,
       draft.approvalStatus,
       draft.reviewerNotes,
@@ -3349,6 +3575,8 @@ export class D1ResilienceStore implements ResilienceStore {
   async updateScenarioDraft(id: string, patch: ScenarioDraftPatch): Promise<ScenarioDraft | null> {
     const current = await this.db.prepare(
       `SELECT id, title, template_id AS templateId, audience, launch_mode AS launchMode, difficulty,
+              trigger_event AS triggerEvent, scenario_scope AS scenarioScope, evidence_focus AS evidenceFocus,
+              selected_document_ids_json AS selectedDocumentIdsJson, selected_context_item_ids_json AS selectedContextItemIdsJson,
               learning_objectives AS learningObjectives, approval_status AS approvalStatus,
               reviewer_notes AS reviewerNotes, reviewed_at AS reviewedAt,
               reviewed_by_user_id AS reviewedByUserId, reviewed_by_name AS reviewedByName,
@@ -3374,7 +3602,8 @@ export class D1ResilienceStore implements ResilienceStore {
 
     await this.db.prepare(
       `UPDATE scenario_drafts
-       SET title = ?, template_id = ?, audience = ?, launch_mode = ?, difficulty = ?, learning_objectives = ?,
+       SET title = ?, template_id = ?, audience = ?, launch_mode = ?, difficulty = ?, trigger_event = ?,
+           scenario_scope = ?, evidence_focus = ?, selected_document_ids_json = ?, selected_context_item_ids_json = ?, learning_objectives = ?,
            approval_status = ?, reviewer_notes = ?, reviewed_at = ?, reviewed_by_user_id = ?, reviewed_by_name = ?,
            scheduled_start_at = ?, participants_label = ?, updated_at = ?
        WHERE id = ?`,
@@ -3384,6 +3613,11 @@ export class D1ResilienceStore implements ResilienceStore {
       next.audience,
       next.launchMode,
       next.difficulty,
+      next.triggerEvent,
+      next.scenarioScope,
+      next.evidenceFocus,
+      JSON.stringify(next.selectedDocumentIds),
+      JSON.stringify(next.selectedContextItemIds),
       next.learningObjectives,
       next.approvalStatus,
       next.reviewerNotes,
@@ -3426,6 +3660,7 @@ export class D1ResilienceStore implements ResilienceStore {
     const member: RosterMember = {
       id: crypto.randomUUID(),
       ...input,
+      email: normalizeIdentityEmail(input.email),
       updatedAt: timestamp,
     };
 
@@ -3455,6 +3690,7 @@ export class D1ResilienceStore implements ResilienceStore {
     const next: RosterMember = {
       ...current,
       ...patch,
+      email: patch.email ? normalizeIdentityEmail(patch.email) : current.email,
       managerName: patch.managerName === undefined ? current.managerName : patch.managerName,
       updatedAt: nowIso(),
     };
@@ -3507,8 +3743,8 @@ export class D1ResilienceStore implements ResilienceStore {
               scope_teams_json AS scopeTeamsJson, roster_member_id AS rosterMemberId,
               status, created_at AS createdAt, updated_at AS updatedAt
        FROM workspace_users
-       WHERE lower(email) = lower(?)`,
-    ).bind(email.trim()).first<WorkspaceUserRow>();
+       WHERE lower(email) = ?`,
+    ).bind(normalizeIdentityEmail(email)).first<WorkspaceUserRow>();
 
     return row ? mapWorkspaceUserRow(row) : null;
   }
@@ -3517,7 +3753,7 @@ export class D1ResilienceStore implements ResilienceStore {
     const user: WorkspaceUser = {
       id: crypto.randomUUID(),
       fullName: input.fullName,
-      email: input.email,
+      email: normalizeIdentityEmail(input.email),
       role: input.role,
       capabilities: input.capabilities,
       scopeTeams: input.scopeTeams,
@@ -3562,6 +3798,7 @@ export class D1ResilienceStore implements ResilienceStore {
     const next: WorkspaceUser = {
       ...current,
       ...patch,
+      email: patch.email ? normalizeIdentityEmail(patch.email) : current.email,
       capabilities: patch.capabilities ?? current.capabilities,
       scopeTeams: patch.scopeTeams ?? current.scopeTeams,
       rosterMemberId: patch.rosterMemberId === undefined ? current.rosterMemberId : patch.rosterMemberId,
@@ -3606,7 +3843,7 @@ export class D1ResilienceStore implements ResilienceStore {
   async createWorkspaceInvite(input: WorkspaceInviteInput & { invitedByUserId: string | null }): Promise<WorkspaceInvite> {
     const invite: WorkspaceInvite = {
       id: crypto.randomUUID(),
-      email: input.email,
+      email: normalizeIdentityEmail(input.email),
       fullName: input.fullName,
       role: input.role,
       capabilities: input.capabilities,
@@ -3773,10 +4010,10 @@ export class D1ResilienceStore implements ResilienceStore {
               magic_link_token_hash AS magicLinkTokenHash, magic_link_expires_at AS magicLinkExpiresAt,
               magic_link_sent_at AS magicLinkSentAt
        FROM workspace_invites
-       WHERE lower(email) = lower(?) AND status = 'pending'
+       WHERE lower(email) = ? AND status = 'pending'
        ORDER BY updated_at DESC
        LIMIT 1`,
-    ).bind(email.trim()).first<WorkspaceInviteRow>();
+    ).bind(normalizeIdentityEmail(email)).first<WorkspaceInviteRow>();
 
     return row ? mapWorkspaceInviteRow(row) : null;
   }
@@ -3986,6 +4223,8 @@ export class D1ResilienceStore implements ResilienceStore {
   async createLaunch(input: LaunchInput): Promise<Launch | null> {
     const draft = await this.db.prepare(
       `SELECT id, title, template_id AS templateId, audience, launch_mode AS launchMode, difficulty,
+              trigger_event AS triggerEvent, scenario_scope AS scenarioScope, evidence_focus AS evidenceFocus,
+              selected_document_ids_json AS selectedDocumentIdsJson, selected_context_item_ids_json AS selectedContextItemIdsJson,
               learning_objectives AS learningObjectives, approval_status AS approvalStatus,
               reviewer_notes AS reviewerNotes, reviewed_at AS reviewedAt,
               reviewed_by_user_id AS reviewedByUserId, reviewed_by_name AS reviewedByName,
@@ -4067,6 +4306,8 @@ export class D1ResilienceStore implements ResilienceStore {
     if (patch.scenarioDraftId && patch.scenarioDraftId !== current.scenarioDraftId) {
       const replacementDraft = await this.db.prepare(
         `SELECT id, title, template_id AS templateId, audience, launch_mode AS launchMode, difficulty,
+                trigger_event AS triggerEvent, scenario_scope AS scenarioScope, evidence_focus AS evidenceFocus,
+                selected_document_ids_json AS selectedDocumentIdsJson, selected_context_item_ids_json AS selectedContextItemIdsJson,
                 learning_objectives AS learningObjectives, approval_status AS approvalStatus,
                 reviewer_notes AS reviewerNotes, reviewed_at AS reviewedAt,
                 reviewed_by_user_id AS reviewedByUserId, reviewed_by_name AS reviewedByName,
@@ -4090,7 +4331,7 @@ export class D1ResilienceStore implements ResilienceStore {
     const next: Launch = {
       ...current,
       scenarioDraftId: nextDraftId,
-      name: nextName,
+      name: patch.name ?? nextName,
       mode: nextMode,
       audience: nextAudience,
       learningObjectives: nextLearningObjectives,
@@ -4437,7 +4678,7 @@ export class D1ResilienceStore implements ResilienceStore {
 
 function buildScenarioBrief(draft: ScenarioDraft): string {
   const deliveryLabel = draft.launchMode === 'individual' ? 'assigned exercise' : 'facilitator-led tabletop';
-  return `${draft.title} is a ${deliveryLabel} for ${draft.audience}. Participants should use approved internal procedures to determine the first escalation, assess business impact, and document the next required action.`;
+  return `${draft.title} is a ${deliveryLabel} for ${draft.audience}. The triggering event is ${draft.triggerEvent.toLowerCase()}. The scenario scope covers ${draft.scenarioScope.toLowerCase()}. Participants should use approved internal procedures to determine the first escalation, assess business impact, and document evidence focused on ${draft.evidenceFocus.toLowerCase()}.`;
 }
 
 function buildDocumentSummary(
@@ -4778,6 +5019,7 @@ function hasAnyParticipantProgress(run: Pick<ParticipantRun, 'firstAction' | 'es
 function summarizeParticipantRuns(participantRuns: ParticipantRun[]) {
   const totalCount = participantRuns.length;
   const submittedRuns = participantRuns.filter((run) => run.status === 'submitted');
+  const inProgressRuns = participantRuns.filter((run) => run.status === 'in_progress');
   const submittedCount = submittedRuns.length;
   const completionRate = totalCount > 0 ? Math.round((submittedCount / totalCount) * 100) : 0;
   const scoreValues = participantRuns
@@ -4786,7 +5028,7 @@ function summarizeParticipantRuns(participantRuns: ParticipantRun[]) {
   const averageScore =
     scoreValues.length > 0 ? Math.round(scoreValues.reduce((sum, score) => sum + score, 0) / scoreValues.length) : null;
 
-  return { totalCount, submittedCount, completionRate, averageScore };
+  return { totalCount, submittedCount, inProgressCount: inProgressRuns.length, completionRate, averageScore };
 }
 
 function buildEvidenceItems(
@@ -4830,6 +5072,28 @@ function evidenceReady(value: boolean): EvidenceStatus {
   return value ? 'ready' : 'pending';
 }
 
+function compareReportSummaries(left: ReportSummary, right: ReportSummary): number {
+  const priorityDelta = reportPriority(left) - reportPriority(right);
+  if (priorityDelta !== 0) return priorityDelta;
+
+  if (left.followUpCount !== right.followUpCount) {
+    return right.followUpCount - left.followUpCount;
+  }
+
+  if (left.submittedCount !== right.submittedCount) {
+    return right.submittedCount - left.submittedCount;
+  }
+
+  return right.lastUpdated.localeCompare(left.lastUpdated);
+}
+
+function reportPriority(report: Pick<ReportSummary, 'status' | 'evidenceStatus' | 'followUpCount'>): number {
+  if (report.status === 'closed') return 3;
+  if (report.evidenceStatus === 'ready' && report.followUpCount > 0) return 0;
+  if (report.evidenceStatus === 'ready') return 1;
+  return 2;
+}
+
 function deriveReportStatus(
   launch: Pick<Launch, 'reportClosedAt'>,
   metrics: ReturnType<typeof summarizeParticipantRuns>,
@@ -4857,6 +5121,15 @@ function buildReportHighlights(
   const highlights: string[] = [];
   highlights.push(`${metrics.submittedCount} of ${metrics.totalCount} participant runs have been submitted for ${launch.name}.`);
 
+  const followUpCount = parseFollowUpActions(launch.reportFollowUpText).length;
+  if (launch.reportClosedAt) {
+    highlights.push(`The evidence package was formally closed on ${launch.reportClosedAt.slice(0, 10)}.`);
+  } else if (metrics.submittedCount > 0 && metrics.completionRate === 100) {
+    highlights.push('The evidence package is ready for operator closeout and export.');
+  } else if (metrics.submittedCount > 0) {
+    highlights.push('The evidence package remains open while participant completion is still in progress.');
+  }
+
   const missingPolicyCount = participantRuns.filter((run) => run.status === 'submitted' && !run.policyAcknowledged).length;
   if (missingPolicyCount > 0) {
     highlights.push(`${missingPolicyCount} submitted response${missingPolicyCount === 1 ? '' : 's'} did not acknowledge the controlling policy or playbook.`);
@@ -4871,6 +5144,10 @@ function buildReportHighlights(
   const incompleteRuns = participantRuns.filter((run) => run.requiredActionsCompleted < run.totalRequiredActions).length;
   if (incompleteRuns > 0) {
     highlights.push(`${incompleteRuns} participant run${incompleteRuns === 1 ? '' : 's'} still miss one or more required checkpoint actions.`);
+  }
+
+  if (followUpCount > 0) {
+    highlights.push(`${followUpCount} operator follow-up action${followUpCount === 1 ? '' : 's'} remain open from the last review pass.`);
   }
 
   return highlights;
@@ -4893,6 +5170,7 @@ function buildAfterActionSummary(
   const missingPolicyCount = participantRuns.filter((run) => run.status === 'submitted' && !run.policyAcknowledged).length;
   const incompleteRuns = participantRuns.filter((run) => run.requiredActionsCompleted < run.totalRequiredActions).length;
   const noteCount = participantRuns.filter((run) => Boolean(readTrimmedString(run.notes))).length;
+  const followUpCount = parseFollowUpActions(launch.reportFollowUpText).length;
   const outstandingRuns = metrics.totalCount - metrics.submittedCount;
 
   const strengths: string[] = [];
@@ -4925,6 +5203,9 @@ function buildAfterActionSummary(
   if (metrics.submittedCount > 0 && noteCount === 0) {
     gaps.push('No participant after-action notes were captured for this launch.');
   }
+  if (followUpCount > 0) {
+    gaps.push(`${followUpCount} operator follow-up action${followUpCount === 1 ? '' : 's'} remain open after review.`);
+  }
 
   const recommendedActions: string[] = [];
   if (outstandingRuns > 0) {
@@ -4938,6 +5219,9 @@ function buildAfterActionSummary(
   }
   if (metrics.submittedCount > 0 && noteCount === 0) {
     recommendedActions.push('Require a short participant after-action note so improvement items are captured consistently.');
+  }
+  if (followUpCount > 0) {
+    recommendedActions.push('Confirm owners and due dates for the open follow-up actions before closing the program loop.');
   }
   if (recommendedActions.length === 0) {
     recommendedActions.push('Use this launch as the baseline evidence package for the next review cycle.');
@@ -5249,6 +5533,11 @@ function mapScenarioDraftRow(row: ScenarioDraftRow): ScenarioDraft {
     audience: row.audience,
     launchMode: row.launchMode,
     difficulty: row.difficulty,
+    triggerEvent: row.triggerEvent,
+    scenarioScope: row.scenarioScope,
+    evidenceFocus: row.evidenceFocus,
+    selectedDocumentIds: parseStringList(row.selectedDocumentIdsJson),
+    selectedContextItemIds: parseStringList(row.selectedContextItemIdsJson),
     learningObjectives: row.learningObjectives,
     approvalStatus: row.approvalStatus,
     reviewerNotes: row.reviewerNotes,
@@ -5366,18 +5655,18 @@ function normalizeWorkspaceUserCapabilities(raw: unknown): WorkspaceUserCapabili
   return raw.filter(isWorkspaceUserCapability);
 }
 
-function parseScopeTeams(raw: string | null): string[] {
+function parseStringList(raw: string | null): string[] {
   if (!raw) return [];
 
   try {
     const parsed = JSON.parse(raw) as unknown;
-    return normalizeScopeTeams(parsed);
+    return normalizeStringList(parsed);
   } catch {
     return [];
   }
 }
 
-function normalizeScopeTeams(raw: unknown): string[] {
+function normalizeStringList(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
 
   return Array.from(
@@ -5387,6 +5676,21 @@ function normalizeScopeTeams(raw: unknown): string[] {
         .filter((entry) => entry.length > 0),
     ),
   ).sort((left, right) => left.localeCompare(right));
+}
+
+function parseScopeTeams(raw: string | null): string[] {
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return normalizeStringList(parsed);
+  } catch {
+    return [];
+  }
+}
+
+function normalizeScopeTeams(raw: unknown): string[] {
+  return normalizeStringList(raw);
 }
 
 function mapAuthSessionRow(row: AuthSessionRow): AuthSession {
@@ -5500,6 +5804,11 @@ function normalizeNullableString(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const trimmed = readTrimmedString(value);
   return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeIdentityEmailInput(value: unknown): string | null {
+  const email = readTrimmedString(value);
+  return email ? normalizeIdentityEmail(email) : null;
 }
 
 function formatStatusLabel(value: string): string {

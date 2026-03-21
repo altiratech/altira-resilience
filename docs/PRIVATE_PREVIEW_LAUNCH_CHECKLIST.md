@@ -35,6 +35,7 @@ Already in place locally:
 - a real Cloudflare-managed preview pair is now staged and validated:
   - web: `https://altira-resilience-web.pages.dev`
   - api: `https://altira-resilience-api-preview.rjameson.workers.dev`
+  - browser auth now goes through same-origin Pages Functions under `/api/*` so preview sign-in does not depend on a cross-site cookie surviving between `pages.dev` and `workers.dev`
   - real browser sign-in and sign-out have been verified against the staged preview
 
 Still open before deployment:

@@ -8,6 +8,7 @@ import type {
   AuthSessionState,
   BootstrapPayload,
   ContextBucket,
+  ContextItem,
   ContextItemInput,
   DocumentParseStatus,
   DocumentSummary,
@@ -266,7 +267,9 @@ function App() {
   const [rosterForm, setRosterForm] = useState<RosterMemberInput>(makeDefaultRosterMemberInput());
   const [workspaceUserForm, setWorkspaceUserForm] = useState<WorkspaceAccessForm>(makeDefaultWorkspaceUserInput());
   const [workspaceInviteForm, setWorkspaceInviteForm] = useState<WorkspaceInviteForm>(makeDefaultWorkspaceInviteInput());
-  const [draftForm, setDraftForm] = useState<ScenarioDraftInput>(makeDefaultDraftInput(fallbackTemplates[0]));
+  const [draftForm, setDraftForm] = useState<ScenarioDraftInput>(
+    makeDefaultDraftInput(fallbackTemplates[0], fallbackDocuments, fallbackContext),
+  );
   const [draftReviewNotes, setDraftReviewNotes] = useState('');
   const [launchForm, setLaunchForm] = useState<LaunchInput>({
     scenarioDraftId: '',
@@ -398,7 +401,7 @@ function App() {
     setDraftForm((current) => ({
       ...current,
       templateId: selectedScenarioTemplate.id,
-      audience: selectedScenarioTemplate.primaryAudience,
+      audience: current.audience ? current.audience : selectedScenarioTemplate.primaryAudience,
       title: current.title ? current.title : defaultTitleForTemplate(selectedScenarioTemplate),
     }));
   }, [activeDraftId, selectedScenarioTemplate]);
@@ -734,7 +737,7 @@ function App() {
   function startNewDraftFromTemplate(template: ScenarioTemplate) {
     setSelectedTemplate(template.id);
     setActiveDraftId(null);
-    setDraftForm(makeDefaultDraftInput(template));
+    setDraftForm(makeDefaultDraftInput(template, documents, contextBuckets));
     setDraftReviewNotes('');
     setActiveNav('launches');
     setActiveExercisesView('studio');
@@ -750,6 +753,11 @@ function App() {
       audience: draft.audience,
       launchMode: draft.launchMode,
       difficulty: draft.difficulty,
+      triggerEvent: draft.triggerEvent,
+      scenarioScope: draft.scenarioScope,
+      evidenceFocus: draft.evidenceFocus,
+      selectedDocumentIds: draft.selectedDocumentIds,
+      selectedContextItemIds: draft.selectedContextItemIds,
       learningObjectives: draft.learningObjectives,
       approvalStatus: draft.approvalStatus,
       scheduledStartAt: draft.scheduledStartAt,
@@ -1104,6 +1112,11 @@ function App() {
         audience: draft.audience,
         launchMode: draft.launchMode,
         difficulty: draft.difficulty,
+        triggerEvent: draft.triggerEvent,
+        scenarioScope: draft.scenarioScope,
+        evidenceFocus: draft.evidenceFocus,
+        selectedDocumentIds: draft.selectedDocumentIds,
+        selectedContextItemIds: draft.selectedContextItemIds,
         learningObjectives: draft.learningObjectives,
         approvalStatus: draft.approvalStatus,
         scheduledStartAt: draft.scheduledStartAt,
@@ -1198,6 +1211,14 @@ function App() {
 
   function closeFacilitatorConsole() {
     setActiveFacilitatorLaunchId(null);
+  }
+
+  function openEvidenceReport(launchId: string) {
+    setActiveParticipantRunId(null);
+    setActiveParticipantRun(null);
+    setActiveFacilitatorLaunchId(null);
+    setActiveNav('reports');
+    void handleSelectReport(launchId);
   }
 
   async function handleLaunchPatch(launchId: string, patch: LaunchPatch, label: string) {
@@ -1498,6 +1519,7 @@ function App() {
             }
             onSetStatus={(status) => void handleLaunchPatch(activeLaunchDetail.id, { status }, 'Updating launch status')}
             onOpenParticipantRun={(runId) => void openParticipantRun(runId)}
+            onOpenEvidence={(launchId) => openEvidenceReport(launchId)}
           />
         ) : null}
 
@@ -1590,6 +1612,47 @@ function App() {
             onRevokeWorkspaceInvite={handleRevokeWorkspaceInvite}
             onReopenWorkspaceInvite={handleReopenWorkspaceInvite}
             onSendWorkspaceInviteMagicLink={handleSendWorkspaceInviteMagicLink}
+            onOpenAccessForRosterMember={(member) => {
+              const normalizedEmail = member.email.trim().toLowerCase();
+              const linkedWorkspaceUser =
+                availableUsers.find((user) => user.rosterMemberId === member.id) ??
+                availableUsers.find((user) => user.email.trim().toLowerCase() === normalizedEmail) ??
+                null;
+              const linkedInvite =
+                workspaceInvites.find(
+                  (invite) =>
+                    invite.status === 'pending' &&
+                    (invite.rosterMemberId === member.id || invite.email.trim().toLowerCase() === normalizedEmail),
+                ) ?? null;
+
+              if (linkedWorkspaceUser) {
+                loadWorkspaceUser(linkedWorkspaceUser);
+                return;
+              }
+
+              setSelectedWorkspaceUserId(null);
+              setWorkspaceUserForm({
+                ...makeDefaultWorkspaceUserInput(),
+                fullName: member.fullName,
+                email: member.email,
+                role: linkedInvite?.role ?? 'user',
+                capabilities: linkedInvite?.capabilities ?? [],
+                scopeTeams: linkedInvite?.role === 'manager' ? linkedInvite.scopeTeams : [],
+                rosterMemberId: member.id,
+                status: 'active',
+              });
+              setWorkspaceInviteForm({
+                ...makeDefaultWorkspaceInviteInput(),
+                fullName: linkedInvite?.fullName ?? member.fullName,
+                email: linkedInvite?.email ?? member.email,
+                role: linkedInvite?.role ?? 'user',
+                capabilities: linkedInvite?.capabilities ?? [],
+                scopeTeams: linkedInvite?.role === 'manager' ? linkedInvite.scopeTeams : [],
+                rosterMemberId: member.id,
+              });
+              setActiveNav('roster');
+              setActivePeopleView('access');
+            }}
           />
         ) : null}
 
@@ -1603,6 +1666,8 @@ function App() {
             selectedTemplate={selectedTemplate}
             onSelectTemplate={setSelectedTemplate}
             selectedScenarioTemplate={selectedScenarioTemplate}
+            documents={documents}
+            contextBuckets={contextBuckets}
             scenarioDrafts={scenarioDrafts}
             activeDraftId={activeDraftId}
             draftForm={draftForm}
@@ -1615,7 +1680,7 @@ function App() {
               setActiveExercisesView('studio');
               setActiveStudioStep('templates');
               setActiveDraftId(null);
-              setDraftForm(makeDefaultDraftInput(selectedScenarioTemplate));
+              setDraftForm(makeDefaultDraftInput(selectedScenarioTemplate, documents, contextBuckets));
               setDraftReviewNotes('');
             }}
             onOpenMaterialsLibrary={() => {
@@ -1646,6 +1711,7 @@ function App() {
             onAssignTeamToLaunch={handleAssignTeamToLaunch}
             onOpenParticipantRun={(runId) => void openParticipantRun(runId)}
             onOpenFacilitatorConsole={openFacilitatorConsole}
+            onOpenEvidence={openEvidenceReport}
           />
         ) : null}
 
@@ -2186,6 +2252,7 @@ function PeopleHubPanel({
   onRevokeWorkspaceInvite,
   onReopenWorkspaceInvite,
   onSendWorkspaceInviteMagicLink,
+  onOpenAccessForRosterMember,
 }: {
   currentUser: WorkspaceUser;
   activeView: PeopleView;
@@ -2214,12 +2281,65 @@ function PeopleHubPanel({
   onRevokeWorkspaceInvite: (inviteId: string) => void;
   onReopenWorkspaceInvite: (inviteId: string) => Promise<void>;
   onSendWorkspaceInviteMagicLink: (inviteId: string) => Promise<void>;
+  onOpenAccessForRosterMember: (member: RosterMember) => void;
 }) {
   const accessVisible = currentUser.role === 'admin';
   const resolvedActiveView = accessVisible ? activeView : 'directory';
+  const activeRosterMembers = rosterMembers.filter((member) => member.status === 'active');
+  const normalizedActiveRosterEmails = new Set(activeRosterMembers.map((member) => normalizeIdentityEmailValue(member.email)));
+  const activeWorkspaceUsers = availableUsers.filter((user) => user.status === 'active');
+  const activeWorkspaceUserByEmail = new Map(
+    activeWorkspaceUsers.map((user) => [normalizeIdentityEmailValue(user.email), user] as const),
+  );
+  const linkedActiveRosterIds = new Set(
+    activeWorkspaceUsers
+      .filter((user) => user.rosterMemberId !== null)
+      .map((user) => user.rosterMemberId)
+      .filter((value): value is string => Boolean(value)),
+  );
+  const pendingInvites = workspaceInvites.filter((invite) => invite.status === 'pending');
+  const pendingInviteRosterIds = new Set(
+    pendingInvites
+      .map((invite) => invite.rosterMemberId)
+      .filter((value): value is string => Boolean(value)),
+  );
+  const pendingInviteEmails = new Set(pendingInvites.map((invite) => normalizeIdentityEmailValue(invite.email)));
+  const rosterAccessGaps = activeRosterMembers.filter((member) => {
+    const normalizedEmail = normalizeIdentityEmailValue(member.email);
+    const hasActiveCoverage = linkedActiveRosterIds.has(member.id) || activeWorkspaceUserByEmail.has(normalizedEmail);
+    return !hasActiveCoverage && !pendingInviteRosterIds.has(member.id) && !pendingInviteEmails.has(normalizedEmail);
+  });
+  const workspaceOnlyUsers = activeWorkspaceUsers.filter((user) => {
+    const normalizedEmail = normalizeIdentityEmailValue(user.email);
+    return !user.rosterMemberId && !normalizedActiveRosterEmails.has(normalizedEmail);
+  });
 
   return (
     <section className="stack">
+      <section className="summary-grid">
+        <article className="summary-card summary-ready">
+          <div className="summary-label">Active participants</div>
+          <div className="summary-value">{activeRosterMembers.length}</div>
+          <p>People currently available for launches, assignments, and evidence snapshots.</p>
+        </article>
+        <article className="summary-card summary-ready">
+          <div className="summary-label">Active workspace access</div>
+          <div className="summary-value">{activeWorkspaceUsers.length}</div>
+          <p>Workspace members who can currently sign in and operate in the readiness program.</p>
+        </article>
+        <article className={`summary-card ${pendingInvites.length > 0 ? 'summary-attention' : 'summary-neutral'}`}>
+          <div className="summary-label">Pending activation</div>
+          <div className="summary-value">{pendingInvites.length}</div>
+          <p>Invites that exist but still need first sign-in before they become active workspace members.</p>
+        </article>
+        <article
+          className={`summary-card ${rosterAccessGaps.length > 0 || workspaceOnlyUsers.length > 0 ? 'summary-attention' : 'summary-ready'}`}
+        >
+          <div className="summary-label">Access gaps</div>
+          <div className="summary-value">{rosterAccessGaps.length + workspaceOnlyUsers.length}</div>
+          <p>Participants without access plus workspace members who are not yet tied back to the roster.</p>
+        </article>
+      </section>
       <SectionTabs
         tabs={
           accessVisible
@@ -2242,6 +2362,9 @@ function PeopleHubPanel({
           onSelectMember={onSelectMember}
           onSubmit={onSubmit}
           onReset={onReset}
+          availableUsers={availableUsers}
+          workspaceInvites={workspaceInvites}
+          onOpenAccessForMember={onOpenAccessForRosterMember}
         />
       ) : (
         <WorkspaceAccessPanel
@@ -2321,6 +2444,58 @@ function WorkspaceAccessPanel({
   const inactiveUsers = availableUsers.filter((user) => user.status === 'inactive');
   const revokedInvites = workspaceInvites.filter((invite) => invite.status === 'revoked');
   const activeAdmins = activeUsers.filter((user) => user.role === 'admin');
+  const activeRosterMembers = rosterMembers.filter((member) => member.status === 'active');
+  const activeUserByEmail = new Map(activeUsers.map((user) => [normalizeIdentityEmailValue(user.email), user] as const));
+  const activeUserByRosterId = new Map(
+    activeUsers
+      .filter((user) => user.rosterMemberId !== null)
+      .map((user) => [user.rosterMemberId, user] as const),
+  );
+  const pendingInviteByRosterId = new Map(
+    pendingInvites
+      .filter((invite) => invite.rosterMemberId !== null)
+      .map((invite) => [invite.rosterMemberId, invite] as const),
+  );
+  const pendingInviteByEmail = new Map(
+    pendingInvites.map((invite) => [normalizeIdentityEmailValue(invite.email), invite] as const),
+  );
+  const linkedActiveRosterCount = activeRosterMembers.filter((member) => {
+    const normalizedEmail = normalizeIdentityEmailValue(member.email);
+    return activeUserByRosterId.has(member.id) || activeUserByEmail.has(normalizedEmail);
+  }).length;
+  const provisionalRosterLinks = activeRosterMembers.filter((member) => {
+    const normalizedEmail = normalizeIdentityEmailValue(member.email);
+    return !activeUserByRosterId.has(member.id) && activeUserByEmail.has(normalizedEmail);
+  });
+  const rosterAccessGaps = activeRosterMembers.filter((member) => {
+    const normalizedEmail = normalizeIdentityEmailValue(member.email);
+    const hasActiveCoverage = activeUserByRosterId.has(member.id) || activeUserByEmail.has(normalizedEmail);
+    return !hasActiveCoverage && !pendingInviteByRosterId.has(member.id) && !pendingInviteByEmail.has(normalizedEmail);
+  });
+  const workspaceOnlyUsers = activeUsers.filter((user) => {
+    const normalizedEmail = normalizeIdentityEmailValue(user.email);
+    return !user.rosterMemberId && !activeRosterMembers.some((member) => normalizeIdentityEmailValue(member.email) === normalizedEmail);
+  });
+  const coverageByTeam = Array.from(
+    activeRosterMembers.reduce((map, member) => {
+      const entry = map.get(member.team) ?? { team: member.team, activeRoster: 0, activeAccess: 0, pendingAccess: 0, gaps: 0 };
+      entry.activeRoster += 1;
+
+      const normalizedEmail = normalizeIdentityEmailValue(member.email);
+      if (activeUserByRosterId.has(member.id) || activeUserByEmail.has(normalizedEmail)) {
+        entry.activeAccess += 1;
+      } else if (pendingInviteByRosterId.has(member.id) || pendingInviteByEmail.has(normalizedEmail)) {
+        entry.pendingAccess += 1;
+      } else {
+        entry.gaps += 1;
+      }
+
+      map.set(member.team, entry);
+      return map;
+    }, new Map<string, { team: string; activeRoster: number; activeAccess: number; pendingAccess: number; gaps: number }>()),
+  )
+    .map(([, value]) => value)
+    .sort((left, right) => right.gaps - left.gaps || right.pendingAccess - left.pendingAccess || left.team.localeCompare(right.team));
 
   return (
     <section className="stack">
@@ -2330,20 +2505,22 @@ function WorkspaceAccessPanel({
           <div className="summary-value">{activeUsers.length}</div>
           <p>Workspace members who can currently sign in and operate inside Resilience.</p>
         </article>
-        <article className="summary-card summary-neutral">
-          <div className="summary-label">Inactive users</div>
-          <div className="summary-value">{inactiveUsers.length}</div>
-          <p>Accounts held in the workspace without current sign-in access.</p>
+        <article className={`summary-card ${linkedActiveRosterCount === activeRosterMembers.length ? 'summary-ready' : 'summary-attention'}`}>
+          <div className="summary-label">Roster covered</div>
+          <div className="summary-value">
+            {linkedActiveRosterCount}/{activeRosterMembers.length}
+          </div>
+          <p>Active roster members already covered by active workspace access, even if some still need explicit linking.</p>
         </article>
         <article className="summary-card summary-attention">
-          <div className="summary-label">Pending invites</div>
+          <div className="summary-label">Pending access</div>
           <div className="summary-value">{pendingInvites.length}</div>
-          <p>Invites waiting for first sign-in before they become active workspace users.</p>
+          <p>Invites that still need first sign-in before they become active workspace users.</p>
         </article>
-        <article className={`summary-card ${activeAdmins.length > 1 ? 'summary-ready' : 'summary-attention'}`}>
-          <div className="summary-label">Active admins</div>
-          <div className="summary-value">{activeAdmins.length}</div>
-          <p>Keep at least one active admin available so the workspace cannot be locked out.</p>
+        <article className={`summary-card ${rosterAccessGaps.length + workspaceOnlyUsers.length > 0 ? 'summary-attention' : 'summary-ready'}`}>
+          <div className="summary-label">Coverage gaps</div>
+          <div className="summary-value">{rosterAccessGaps.length + workspaceOnlyUsers.length}</div>
+          <p>Roster members without access plus workspace users who are not yet tied back to the participant directory.</p>
         </article>
       </section>
 
@@ -2369,7 +2546,11 @@ function WorkspaceAccessPanel({
             </thead>
             <tbody>
               {availableUsers.map((user) => {
-                const linkedRoster = user.rosterMemberId ? rosterById.get(user.rosterMemberId) : null;
+                const linkedRoster =
+                  (user.rosterMemberId ? rosterById.get(user.rosterMemberId) : null) ??
+                  rosterMembers.find((member) => normalizeIdentityEmailValue(member.email) === normalizeIdentityEmailValue(user.email)) ??
+                  null;
+                const isEmailMatchedRoster = !user.rosterMemberId && Boolean(linkedRoster);
                 const selected = user.id === selectedWorkspaceUserId;
                 const isCurrentUser = user.id === currentUser.id;
                 return (
@@ -2387,7 +2568,10 @@ function WorkspaceAccessPanel({
                       {user.capabilities.length ? user.capabilities.map(formatWorkspaceCapabilityLabel).join(', ') : 'None'}
                     </td>
                     <td>{formatWorkspaceScopeLabel(user.role, user.scopeTeams, linkedRoster?.team ?? null)}</td>
-                    <td>{linkedRoster ? `${linkedRoster.fullName} · ${linkedRoster.team}` : 'No linked roster member'}</td>
+                    <td>
+                      {linkedRoster ? `${linkedRoster.fullName} · ${linkedRoster.team}` : 'No linked roster member'}
+                      {isEmailMatchedRoster ? <div className="table-note">Matched by email. Link explicitly for cleaner admin coverage.</div> : null}
+                    </td>
                     <td>
                       <span className={`badge status-${user.status}`}>{user.status}</span>
                     </td>
@@ -2554,6 +2738,102 @@ function WorkspaceAccessPanel({
             <li>Product-specific powers now sit in capabilities, not new top-level suite roles.</li>
             <li>The active admin tied to the current session cannot deactivate or demote itself.</li>
           </ul>
+        </div>
+      </div>
+
+      <div className="panel-grid">
+        <div className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>Access coverage</h3>
+              <p>Keep roster coverage, manager scope, and workspace access aligned before launches go live.</p>
+            </div>
+          </div>
+          {coverageByTeam.length ? (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Team</th>
+                  <th>Active roster</th>
+                  <th>Active access</th>
+                  <th>Pending</th>
+                  <th>Gaps</th>
+                </tr>
+              </thead>
+              <tbody>
+                {coverageByTeam.map((entry) => (
+                  <tr key={entry.team}>
+                    <td>
+                      <strong>{entry.team}</strong>
+                    </td>
+                    <td>{entry.activeRoster}</td>
+                    <td>{entry.activeAccess}</td>
+                    <td>{entry.pendingAccess}</td>
+                    <td>{entry.gaps}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="empty-state">No active roster members exist yet.</div>
+          )}
+        </div>
+
+        <div className="panel side-panel">
+          <h3>Access follow-up</h3>
+          {rosterAccessGaps.length ? (
+            <div className="detail-card compact-detail-card">
+              <span className="summary-label">Roster members without access</span>
+              <ul className="muted-list">
+                {rosterAccessGaps.slice(0, 5).map((member) => (
+                  <li key={member.id}>
+                    {member.fullName} · {member.team}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="detail-card compact-detail-card">
+              <span className="summary-label">Roster coverage</span>
+              <p>Every active roster member is either linked to an active workspace user or staged through a pending invite.</p>
+            </div>
+          )}
+          <div className="detail-card compact-detail-card">
+            <span className="summary-label">Link follow-up</span>
+            {provisionalRosterLinks.length ? (
+              <ul className="muted-list">
+                {provisionalRosterLinks.slice(0, 5).map((member) => (
+                  <li key={member.id}>
+                    {member.fullName} · {member.team}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>No email-matched workspace users are waiting on an explicit roster link.</p>
+            )}
+          </div>
+          <div className="detail-card compact-detail-card">
+            <span className="summary-label">Workspace-only members</span>
+            {workspaceOnlyUsers.length ? (
+              <ul className="muted-list">
+                {workspaceOnlyUsers.slice(0, 5).map((user) => (
+                  <li key={user.id}>
+                    {user.fullName} · {formatWorkspaceRoleLabel(user.role)}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>All active workspace members are tied cleanly to the participant directory.</p>
+            )}
+          </div>
+          <div className="detail-card compact-detail-card">
+            <span className="summary-label">Admin posture</span>
+            <p>
+              {activeAdmins.length} active admin{activeAdmins.length === 1 ? '' : 's'} · {inactiveUsers.length} inactive account
+              {inactiveUsers.length === 1 ? '' : 's'} · {revokedInvites.length} revoked invite
+              {revokedInvites.length === 1 ? '' : 's'} available to reopen if needed.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -2821,6 +3101,8 @@ function ExercisesHubPanel({
   selectedTemplate,
   onSelectTemplate,
   selectedScenarioTemplate,
+  documents,
+  contextBuckets,
   scenarioDrafts,
   activeDraftId,
   draftForm,
@@ -2852,6 +3134,7 @@ function ExercisesHubPanel({
   onAssignTeamToLaunch,
   onOpenParticipantRun,
   onOpenFacilitatorConsole,
+  onOpenEvidence,
 }: {
   activeView: ExercisesView;
   onViewChange: (view: ExercisesView) => void;
@@ -2861,6 +3144,8 @@ function ExercisesHubPanel({
   selectedTemplate: string;
   onSelectTemplate: (value: string) => void;
   selectedScenarioTemplate: ScenarioTemplate;
+  documents: DocumentSummary[];
+  contextBuckets: ContextBucket[];
   scenarioDrafts: ScenarioDraft[];
   activeDraftId: string | null;
   draftForm: ScenarioDraftInput;
@@ -2892,6 +3177,7 @@ function ExercisesHubPanel({
   onAssignTeamToLaunch: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onOpenParticipantRun: (runId: string) => void;
   onOpenFacilitatorConsole: (launchId: string) => void;
+  onOpenEvidence: (launchId: string) => void;
 }) {
   return (
     <section className="stack">
@@ -2962,6 +3248,8 @@ function ExercisesHubPanel({
           ) : (
             <ConfigurationPanel
               selectedTemplate={selectedScenarioTemplate}
+              documents={documents}
+              contextBuckets={contextBuckets}
               scenarioDrafts={scenarioDrafts}
               activeDraftId={activeDraftId}
               form={draftForm}
@@ -2998,6 +3286,7 @@ function ExercisesHubPanel({
             onAssignTeamToLaunch={onAssignTeamToLaunch}
             onOpenParticipantRun={onOpenParticipantRun}
             onOpenFacilitatorConsole={onOpenFacilitatorConsole}
+            onOpenEvidence={onOpenEvidence}
           />
       ) : null}
     </section>
@@ -3744,6 +4033,9 @@ function RosterPanel({
   onSelectMember,
   onSubmit,
   onReset,
+  availableUsers,
+  workspaceInvites,
+  onOpenAccessForMember,
 }: {
   currentUser: WorkspaceUser;
   rosterMembers: RosterMember[];
@@ -3753,8 +4045,42 @@ function RosterPanel({
   onSelectMember: (member: RosterMember | null) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onReset: () => void;
+  availableUsers: WorkspaceUser[];
+  workspaceInvites: WorkspaceInvite[];
+  onOpenAccessForMember: (member: RosterMember) => void;
 }) {
   const canEditRoster = currentUser.role === 'admin';
+  const workspaceUserByEmail = new Map(
+    availableUsers.map((user) => [normalizeIdentityEmailValue(user.email), user] as const),
+  );
+  const workspaceUserByRosterId = new Map(
+    availableUsers
+      .filter((user) => user.rosterMemberId !== null)
+      .map((user) => [user.rosterMemberId, user] as const),
+  );
+  const pendingInviteByRosterId = new Map(
+    workspaceInvites
+      .filter((invite) => invite.status === 'pending' && invite.rosterMemberId !== null)
+      .map((invite) => [invite.rosterMemberId, invite] as const),
+  );
+  const pendingInviteByEmail = new Map(
+    workspaceInvites
+      .filter((invite) => invite.status === 'pending')
+      .map((invite) => [normalizeIdentityEmailValue(invite.email), invite] as const),
+  );
+  const selectedMember =
+    selectedRosterMemberId ? rosterMembers.find((member) => member.id === selectedRosterMemberId) ?? null : null;
+  const selectedLinkedUser = selectedMember
+    ? workspaceUserByRosterId.get(selectedMember.id) ?? workspaceUserByEmail.get(normalizeIdentityEmailValue(selectedMember.email)) ?? null
+    : null;
+  const selectedLinkedUserNeedsExplicitLink = Boolean(
+    selectedMember && selectedLinkedUser && !workspaceUserByRosterId.get(selectedMember.id),
+  );
+  const selectedPendingInvite = selectedMember
+    ? pendingInviteByRosterId.get(selectedMember.id) ??
+      pendingInviteByEmail.get(normalizeIdentityEmailValue(selectedMember.email)) ??
+      null
+    : null;
 
   return (
     <section className="panel-grid">
@@ -3772,42 +4098,84 @@ function RosterPanel({
                 <th>Name</th>
                 <th>Role</th>
                 <th>Team</th>
+                <th>Access</th>
                 <th>Status</th>
                 <th />
               </tr>
             </thead>
             <tbody>
-              {rosterMembers.map((member) => (
-                <tr
-                  key={member.id}
-                  className={`selectable-row${member.id === selectedRosterMemberId ? ' active' : ''}`}
-                  onClick={() => onSelectMember(member)}
-                >
-                  <td>
-                    <strong>{member.fullName}</strong>
-                    <div className="table-note">{member.email}</div>
-                  </td>
-                  <td>{member.roleTitle}</td>
-                  <td>
-                    {member.team}
-                    {member.managerName ? <div className="table-note">Manager: {member.managerName}</div> : null}
-                  </td>
-                  <td>
-                    <span className={`badge status-${member.status}`}>{member.status}</span>
-                  </td>
-                  <td>
-                    {canEditRoster ? (
-                      <button type="button" className="button-secondary table-button" onClick={() => onSelectMember(member)}>
-                        Edit
-                      </button>
-                    ) : (
-                      <button type="button" className="button-secondary table-button" onClick={() => onSelectMember(member)}>
-                        View
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {rosterMembers.map((member) => {
+                const linkedUser =
+                  workspaceUserByRosterId.get(member.id) ?? workspaceUserByEmail.get(normalizeIdentityEmailValue(member.email)) ?? null;
+                const linkedUserNeedsExplicitLink = Boolean(linkedUser && !workspaceUserByRosterId.get(member.id));
+                const linkedInvite =
+                  pendingInviteByRosterId.get(member.id) ??
+                  pendingInviteByEmail.get(normalizeIdentityEmailValue(member.email)) ??
+                  null;
+
+                return (
+                  <tr
+                    key={member.id}
+                    className={`selectable-row${member.id === selectedRosterMemberId ? ' active' : ''}`}
+                    onClick={() => onSelectMember(member)}
+                  >
+                    <td>
+                      <strong>{member.fullName}</strong>
+                      <div className="table-note">{member.email}</div>
+                    </td>
+                    <td>{member.roleTitle}</td>
+                    <td>
+                      {member.team}
+                      {member.managerName ? <div className="table-note">Manager: {member.managerName}</div> : null}
+                    </td>
+                    <td>
+                      {linkedUser ? (
+                        <>
+                          <span className={`badge status-${linkedUser.status}`}>{linkedUser.status}</span>
+                          <div className="table-note">
+                            Workspace {formatWorkspaceRoleLabel(linkedUser.role).toLowerCase()}
+                            {linkedUserNeedsExplicitLink ? ' · matched by email, link explicitly' : ''}
+                          </div>
+                        </>
+                      ) : linkedInvite ? (
+                        <>
+                          <span className="badge status-pending">pending invite</span>
+                          <div className="table-note">{formatInviteMagicLinkState(linkedInvite)}</div>
+                        </>
+                      ) : member.status === 'inactive' ? (
+                        <div className="table-note">No workspace access needed while roster entry is inactive.</div>
+                      ) : (
+                        <>
+                          <span className="badge status-needs_review">needs access</span>
+                          <div className="table-note">No active workspace user or pending invite linked yet.</div>
+                        </>
+                      )}
+                    </td>
+                    <td>
+                      <span className={`badge status-${member.status}`}>{member.status}</span>
+                    </td>
+                    <td>
+                      <div className="table-action-group">
+                        <button type="button" className="button-secondary table-button" onClick={() => onSelectMember(member)}>
+                          {canEditRoster ? 'Edit' : 'View'}
+                        </button>
+                        {canEditRoster ? (
+                          <button
+                            type="button"
+                            className="button-secondary table-button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onOpenAccessForMember(member);
+                            }}
+                          >
+                            Access
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         ) : (
@@ -3899,18 +4267,41 @@ function RosterPanel({
           </button>
         </form>
         ) : selectedRosterMemberId ? (
-          <div className="detail-card compact-detail-card">
-            <span className="summary-label">{form.fullName}</span>
-            <p>
-              {form.roleTitle}
-              {form.team ? ` · ${form.team}` : ''}
-              {form.managerName ? ` · Manager: ${form.managerName}` : ''}
-              {form.email ? ` · ${form.email}` : ''}
-            </p>
+          <div className="stack">
+            <div className="detail-card compact-detail-card">
+              <span className="summary-label">{form.fullName}</span>
+              <p>
+                {form.roleTitle}
+                {form.team ? ` · ${form.team}` : ''}
+                {form.managerName ? ` · Manager: ${form.managerName}` : ''}
+                {form.email ? ` · ${form.email}` : ''}
+              </p>
+            </div>
+            <div className="detail-card compact-detail-card">
+              <span className="summary-label">Access posture</span>
+              {selectedLinkedUser ? (
+                <p>
+                  {selectedLinkedUser.fullName} is already an active workspace {formatWorkspaceRoleLabel(selectedLinkedUser.role).toLowerCase()}
+                  {selectedLinkedUser.status !== 'active' ? ` (${selectedLinkedUser.status})` : ''}
+                  {selectedLinkedUserNeedsExplicitLink ? '. The account matches this roster entry by email and should be linked explicitly.' : '.'}
+                </p>
+              ) : selectedPendingInvite ? (
+                <p>Workspace access is staged through a pending invite. {formatInviteMagicLinkState(selectedPendingInvite)}.</p>
+              ) : (
+                <p>No active workspace access is linked to this roster member yet.</p>
+              )}
+            </div>
           </div>
         ) : (
           <div className="empty-state">Select a scoped roster member to review their role, team, and manager information.</div>
         )}
+        {canEditRoster && selectedMember ? (
+          <div className="button-row">
+            <button type="button" className="button-secondary" onClick={() => onOpenAccessForMember(selectedMember)}>
+              Open workspace access
+            </button>
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -3961,6 +4352,8 @@ function TemplatePanel({
 
 function ConfigurationPanel({
   selectedTemplate,
+  documents,
+  contextBuckets,
   scenarioDrafts,
   activeDraftId,
   form,
@@ -3973,6 +4366,8 @@ function ConfigurationPanel({
   onStartNewDraft,
 }: {
   selectedTemplate: ScenarioTemplate;
+  documents: DocumentSummary[];
+  contextBuckets: ContextBucket[];
   scenarioDrafts: ScenarioDraft[];
   activeDraftId: string | null;
   form: ScenarioDraftInput;
@@ -3985,6 +4380,21 @@ function ConfigurationPanel({
   onStartNewDraft: () => void;
 }) {
   const activeDraft = activeDraftId ? scenarioDrafts.find((draft) => draft.id === activeDraftId) ?? null : null;
+  const approvedDocuments = documents.filter((document) => document.parseStatus === 'approved');
+  const pendingDocuments = documents.filter((document) => document.parseStatus !== 'approved');
+  const confirmedContextItems = contextBuckets.flatMap((bucket) =>
+    bucket.items
+      .filter((item) => item.reviewState === 'confirmed')
+      .map((item) => ({ ...item, bucketLabel: bucket.label })),
+  );
+  const blockedRequiredContext = contextBuckets.flatMap((bucket) =>
+    bucket.items
+      .filter((item) => item.required && item.reviewState !== 'confirmed')
+      .map((item) => ({ ...item, bucketLabel: bucket.label })),
+  );
+  const selectedMaterials = approvedDocuments.filter((document) => form.selectedDocumentIds.includes(document.id));
+  const selectedContextItems = confirmedContextItems.filter((item) => form.selectedContextItemIds.includes(item.id));
+  const outlineSections = buildScenarioStudioOutline(selectedTemplate, form, selectedMaterials, selectedContextItems);
 
   return (
     <section className="panel-grid">
@@ -4036,6 +4446,30 @@ function ConfigurationPanel({
               <option value="high">High</option>
             </select>
           </label>
+          <label className="full-width">
+            Trigger event
+            <textarea
+              value={form.triggerEvent}
+              onChange={(event) => onFormChange((current) => ({ ...current, triggerEvent: event.target.value }))}
+              placeholder="What happens first that forces the exercise to begin?"
+            />
+          </label>
+          <label className="full-width">
+            Scenario scope
+            <textarea
+              value={form.scenarioScope}
+              onChange={(event) => onFormChange((current) => ({ ...current, scenarioScope: event.target.value }))}
+              placeholder="Which teams, decisions, and time window should this exercise cover?"
+            />
+          </label>
+          <label className="full-width">
+            Evidence focus
+            <textarea
+              value={form.evidenceFocus}
+              onChange={(event) => onFormChange((current) => ({ ...current, evidenceFocus: event.target.value }))}
+              placeholder="What should reviewers learn later from submitted responses and after-action notes?"
+            />
+          </label>
           <label>
             Scheduled start
             <input
@@ -4080,6 +4514,91 @@ function ConfigurationPanel({
             />
           </label>
         </div>
+
+        <div className="detail-grid studio-detail-grid">
+          <div className="detail-card">
+            <span className="summary-label">Approved materials</span>
+            <p>Choose the source documents that should ground this draft so the scenario reflects the firm&apos;s own procedures.</p>
+            <div className="selection-list">
+              {approvedDocuments.length ? (
+                approvedDocuments.map((document) => {
+                  const checked = form.selectedDocumentIds.includes(document.id);
+                  return (
+                    <label key={document.id} className="selection-item">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          onFormChange((current) => ({
+                            ...current,
+                            selectedDocumentIds: toggleStringSelection(current.selectedDocumentIds, document.id),
+                          }))
+                        }
+                      />
+                      <div>
+                        <strong>{document.name}</strong>
+                        <p>
+                          {document.type}
+                          {' · '}
+                          {document.businessUnit}
+                          {' · '}
+                          {document.owner}
+                        </p>
+                      </div>
+                    </label>
+                  );
+                })
+              ) : (
+                <div className="empty-state">No approved materials are available yet. Review materials before authoring this draft.</div>
+              )}
+            </div>
+            {pendingDocuments.length ? (
+              <p className="subtle">
+                {pendingDocuments.length} additional material{pendingDocuments.length === 1 ? '' : 's'} still need review before they can shape this draft.
+              </p>
+            ) : null}
+          </div>
+
+          <div className="detail-card">
+            <span className="summary-label">Confirmed context inputs</span>
+            <p>Include the specific teams, vendors, and escalation roles that should appear in the exercise path and review output.</p>
+            <div className="selection-list">
+              {confirmedContextItems.length ? (
+                confirmedContextItems.map((item) => {
+                  const checked = form.selectedContextItemIds.includes(item.id);
+                  return (
+                    <label key={item.id} className="selection-item">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          onFormChange((current) => ({
+                            ...current,
+                            selectedContextItemIds: toggleStringSelection(current.selectedContextItemIds, item.id),
+                          }))
+                        }
+                      />
+                      <div>
+                        <strong>{item.name}</strong>
+                        <p>
+                          {item.bucketLabel}
+                          {item.required ? ' · Required' : ''}
+                        </p>
+                      </div>
+                    </label>
+                  );
+                })
+              ) : (
+                <div className="empty-state">No confirmed context items are available yet.</div>
+              )}
+            </div>
+            {blockedRequiredContext.length ? (
+              <p className="subtle">
+                {blockedRequiredContext.length} required context input{blockedRequiredContext.length === 1 ? '' : 's'} still need review before the draft is fully launch-ready.
+              </p>
+            ) : null}
+          </div>
+        </div>
         <div className="button-row">
           <button type="button" className="button-secondary" onClick={() => void onSaveDraft('draft')}>
             Save draft
@@ -4109,6 +4628,27 @@ function ConfigurationPanel({
             <li key={input}>{input}</li>
           ))}
         </ul>
+        <div className="detail-card compact-detail-card">
+          <div className="subsection-label">Studio readiness</div>
+          <div className="key-value-list compact-key-value-list">
+            <div className="key-value-row">
+              <span>Approved materials selected</span>
+              <strong>{selectedMaterials.length}</strong>
+            </div>
+            <div className="key-value-row">
+              <span>Confirmed context inputs</span>
+              <strong>{selectedContextItems.length}</strong>
+            </div>
+            <div className="key-value-row">
+              <span>Required context still blocked</span>
+              <strong>{blockedRequiredContext.length}</strong>
+            </div>
+            <div className="key-value-row">
+              <span>Launch mode</span>
+              <strong>{form.launchMode === 'tabletop' ? 'Facilitator-led tabletop' : 'Assigned individual exercise'}</strong>
+            </div>
+          </div>
+        </div>
         <div className="detail-card compact-detail-card draft-review-card">
           <div className="subsection-label">Review posture</div>
           <div className="draft-review-status">
@@ -4124,6 +4664,27 @@ function ConfigurationPanel({
                 : 'New drafts can be saved, submitted for review, or approved from here.'}
           </p>
           {activeDraft?.reviewerNotes ? <p className="draft-review-note">{activeDraft.reviewerNotes}</p> : null}
+        </div>
+        <div className="detail-card compact-detail-card">
+          <div className="subsection-label">Exercise outline</div>
+          <div className="outline-list">
+            {outlineSections.map((section) => (
+              <div key={section.label} className="outline-item">
+                <strong>{section.label}</strong>
+                <p>{section.note}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="detail-card compact-detail-card">
+          <div className="subsection-label">Launch package</div>
+          <ListOrEmpty
+            items={[
+              ...selectedMaterials.map((document) => `Material: ${document.name}`),
+              ...selectedContextItems.map((item) => `Context: ${item.name}`),
+            ]}
+            emptyLabel="No materials or confirmed context have been attached to this draft yet."
+          />
         </div>
         <h4>Saved drafts</h4>
         <div className="draft-list">
@@ -4174,6 +4735,7 @@ function LaunchesPanel({
   onAssignTeamToLaunch,
   onOpenParticipantRun,
   onOpenFacilitatorConsole,
+  onOpenEvidence,
 }: {
   launches: LaunchSummary[];
   approvedDrafts: ScenarioDraft[];
@@ -4194,6 +4756,7 @@ function LaunchesPanel({
   onAssignTeamToLaunch: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onOpenParticipantRun: (runId: string) => void;
   onOpenFacilitatorConsole: (launchId: string) => void;
+  onOpenEvidence: (launchId: string) => void;
 }) {
   return (
     <section className="panel-grid">
@@ -4228,6 +4791,7 @@ function LaunchesPanel({
               onAssignTeamToLaunch={onAssignTeamToLaunch}
               onOpenParticipantRun={onOpenParticipantRun}
               onOpenFacilitatorConsole={onOpenFacilitatorConsole}
+              onOpenEvidence={onOpenEvidence}
             />
           ) : (
             <div className="empty-state">Select a launch to review its scenario brief and participant roster.</div>
@@ -4311,6 +4875,7 @@ function LaunchDetailPanel({
   onAssignTeamToLaunch,
   onOpenParticipantRun,
   onOpenFacilitatorConsole,
+  onOpenEvidence,
 }: {
   launch: LaunchDetail;
   rosterMembers: RosterMember[];
@@ -4323,6 +4888,7 @@ function LaunchDetailPanel({
   onAssignTeamToLaunch: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onOpenParticipantRun: (runId: string) => void;
   onOpenFacilitatorConsole: (launchId: string) => void;
+  onOpenEvidence: (launchId: string) => void;
 }) {
   const selectedRosterMember =
     rosterMembers.find((member) => member.id === participantAssignmentForm.rosterMemberId) ?? null;
@@ -4332,35 +4898,83 @@ function LaunchDetailPanel({
   const canManageAssignments = currentUser.role === 'admin' || currentUser.role === 'manager';
   const canUseFacilitatorConsole =
     currentUser.role === 'admin' || hasWorkspaceCapability(currentUser, 'resilience_tabletop_facilitate');
+  const canOpenEvidence = currentUser.role === 'admin' || launch.participantRuns.length > 0;
+  const launchImmediateActions = buildLaunchImmediateActions(launch);
+  const launchEvidencePosture = buildLaunchEvidencePosture(launch);
 
   return (
     <div className="stack">
       <div className="stat-grid">
         <article className="stat-card">
-          <span className="summary-label">Launch status</span>
-          <strong>{launch.status.replace(/_/g, ' ')}</strong>
+          <span className="summary-label">Runtime status</span>
+          <strong>{formatLaunchStatusLabel(launch.status)}</strong>
         </article>
         <article className="stat-card">
-          <span className="summary-label">Launch date</span>
-          <strong>{launch.startsAt ?? 'Not scheduled'}</strong>
+          <span className="summary-label">Participant coverage</span>
+          <strong>
+            {launch.submittedCount}/{launch.participantCount} submitted
+          </strong>
         </article>
         <article className="stat-card">
-          <span className="summary-label">Draft approval</span>
-          <strong>{launch.draftApprovalStatus.replace(/_/g, ' ')}</strong>
+          <span className="summary-label">Completion</span>
+          <strong>{launch.completionRate}%</strong>
         </article>
         <article className="stat-card">
-          <span className="summary-label">Participants</span>
-          <strong>{launch.participantRuns.length}</strong>
+          <span className="summary-label">Evidence</span>
+          <strong>{launch.evidenceStatus}</strong>
         </article>
-        {launch.mode === 'tabletop' ? (
-          <article className="stat-card">
-            <span className="summary-label">Tabletop phase</span>
-            <strong>{formatTabletopPhaseLabel(launch.tabletopPhase)}</strong>
-          </article>
-        ) : null}
+        <article className="stat-card">
+          <span className="summary-label">Follow-up actions</span>
+          <strong>{launch.followUpCount}</strong>
+        </article>
+        <article className="stat-card">
+          <span className="summary-label">Average score</span>
+          <strong>{launch.averageScore !== null ? `${launch.averageScore}%` : 'No score yet'}</strong>
+        </article>
       </div>
 
       <div className="detail-grid">
+        <div className="detail-card">
+          <span className="summary-label">Launch posture</span>
+          <div className="detail-grid report-detail-grid">
+            <div className="report-section">
+              <strong>Exercise package</strong>
+              <p>
+                {formatLaunchModeLabel(launch.mode)} · {launch.audience}
+              </p>
+              <p className="table-note">
+                Starts {launch.startsAt ?? 'Not scheduled'} · Draft {formatScenarioApprovalStatusLabel(launch.draftApprovalStatus)}
+              </p>
+              {launch.mode === 'tabletop' ? (
+                <p className="table-note">Current tabletop phase: {formatTabletopPhaseLabel(launch.tabletopPhase)}</p>
+              ) : null}
+            </div>
+            <div className="report-section">
+              <strong>Evidence posture</strong>
+              <p>{launchEvidencePosture}</p>
+            </div>
+            <div className="report-section full-width">
+              <strong>Immediate actions</strong>
+              <ListOrEmpty items={launchImmediateActions} emptyLabel="No immediate launch actions are blocking this exercise." />
+            </div>
+            <div className="report-section full-width">
+              <strong>Operator controls</strong>
+              <div className="button-row">
+                {canOpenEvidence ? (
+                  <button type="button" className="button-secondary" onClick={() => onOpenEvidence(launch.id)}>
+                    Open evidence package
+                  </button>
+                ) : null}
+                {launch.mode === 'tabletop' && canUseFacilitatorConsole ? (
+                  <button type="button" className="button-primary" onClick={() => onOpenFacilitatorConsole(launch.id)}>
+                    Open facilitator console
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div className="detail-card">
           <span className="summary-label">Scenario brief</span>
           <p>{launch.scenarioBrief}</p>
@@ -4369,24 +4983,6 @@ function LaunchDetailPanel({
           <span className="summary-label">Learning objectives</span>
           <p>{launch.learningObjectives}</p>
         </div>
-        {launch.mode === 'tabletop' ? (
-          <div className="detail-card">
-            <span className="summary-label">Facilitator console</span>
-            <p>
-              Use the tabletop console to manage phase, session status, live prompts, and facilitator notes without
-              leaving the launch.
-            </p>
-            {canUseFacilitatorConsole ? (
-              <div className="button-row">
-                <button type="button" className="button-primary" onClick={() => onOpenFacilitatorConsole(launch.id)}>
-                  Open facilitator console
-                </button>
-              </div>
-            ) : (
-              <div className="empty-state">Your current role can review the launch, but not control the tabletop session.</div>
-            )}
-          </div>
-        ) : null}
       </div>
 
       <div className="panel-grid compact-grid">
@@ -4407,6 +5003,8 @@ function LaunchDetailPanel({
                 <tr>
                   <th>Participant</th>
                   <th>Status</th>
+                  <th>Due</th>
+                  <th>Checkpoints</th>
                   <th>Score</th>
                   <th>Last activity</th>
                   <th />
@@ -4425,6 +5023,10 @@ function LaunchDetailPanel({
                     </td>
                     <td>
                       <span className={`badge status-${run.status}`}>{run.status.replace(/_/g, ' ')}</span>
+                    </td>
+                    <td>{run.dueAt ?? launch.startsAt ?? 'Not scheduled'}</td>
+                    <td>
+                      {run.requiredActionsCompleted}/{run.totalRequiredActions}
                     </td>
                     <td>{run.scorePercent !== null ? `${run.scorePercent}%` : 'Not started'}</td>
                     <td>{formatDate(run.updatedAt)}</td>
@@ -4646,7 +5248,7 @@ function ReportsPanel({
         <div className="panel-header">
           <div>
             <h3>Evidence queue</h3>
-            <p>Review after-actions, completion posture, score trends, and export-ready evidence packages by exercise.</p>
+            <p>Prioritize open reviews, follow-up load, and export-ready packages across the current exercise program.</p>
           </div>
         </div>
         <ReportTable reports={reports} activeId={selectedReportId} onSelect={onSelectReport} />
@@ -4698,13 +5300,11 @@ function EvidencePanel({
   const readyEvidence = reports.filter((report) => report.evidenceStatus === 'ready' && report.status !== 'closed').length;
   const inReview = reports.filter((report) => report.status === 'in_review').length;
   const closedPackages = reports.filter((report) => report.status === 'closed').length;
+  const openFollowUps = reports
+    .filter((report) => report.status !== 'closed')
+    .reduce((sum, report) => sum + report.followUpCount, 0);
   const averageCompletion =
     reports.length > 0 ? Math.round(reports.reduce((sum, report) => sum + report.completionRate, 0) / reports.length) : 0;
-  const scoredReports = reports.filter((report) => report.averageScore !== null);
-  const averageScore =
-    scoredReports.length > 0
-      ? Math.round(scoredReports.reduce((sum, report) => sum + (report.averageScore ?? 0), 0) / scoredReports.length)
-      : null;
 
   const evidenceCards: AdminSummaryCard[] = [
     {
@@ -4722,11 +5322,14 @@ function EvidencePanel({
       tone: inReview > 0 ? 'attention' : 'ready',
     },
     {
-      id: 'evidence-closed',
-      label: 'Closed packages',
-      value: String(closedPackages),
-      note: closedPackages > 0 ? 'These evidence packages were reviewed and formally closed.' : 'No evidence packages are closed yet.',
-      tone: closedPackages > 0 ? 'ready' : 'neutral',
+      id: 'evidence-follow-up',
+      label: 'Open follow-ups',
+      value: String(openFollowUps),
+      note:
+        openFollowUps > 0
+          ? 'These operator actions still need owners, resolution, or verification.'
+          : 'No open operator follow-up actions remain across visible evidence packages.',
+      tone: openFollowUps > 0 ? 'attention' : 'ready',
     },
     {
       id: 'evidence-completion',
@@ -4736,14 +5339,11 @@ function EvidencePanel({
       tone: averageCompletion >= 75 ? 'ready' : averageCompletion > 0 ? 'attention' : 'neutral',
     },
     {
-      id: 'evidence-score',
-      label: 'Average score',
-      value: averageScore !== null ? `${averageScore}%` : 'N/A',
-      note:
-        averageScore !== null
-          ? 'Average score across reports that already include participant scoring.'
-          : 'Scoring will appear after participants submit required responses.',
-      tone: averageScore !== null && averageScore >= 75 ? 'ready' : averageScore !== null ? 'attention' : 'neutral',
+      id: 'evidence-closed',
+      label: 'Closed packages',
+      value: String(closedPackages),
+      note: closedPackages > 0 ? 'These evidence packages were reviewed and formally closed.' : 'No evidence packages are closed yet.',
+      tone: closedPackages > 0 ? 'ready' : 'neutral',
     },
   ];
 
@@ -4784,6 +5384,12 @@ function ReportDetailPanel({
   onUpdateReportCloseout: (launchId: string, markClosed: boolean) => void;
 }) {
   const canManageCloseout = currentUser.role === 'admin';
+  const immediateActions = buildReportImmediateActions(report);
+  const launchDateLabel = report.startsAt === 'Not scheduled' ? report.startsAt : formatDate(report.startsAt);
+  const participantCoverageLabel = `${report.submittedCount}/${report.participantCount} submitted`;
+  const participantMetadata = [report.mode === 'tabletop' ? 'Tabletop' : 'Individual', report.audience].join(' · ');
+  const participantRoleLabel = (run: ReportDetail['participantRuns'][number]) =>
+    [run.participantRole, run.participantTeam].filter(Boolean).join(' · ');
 
   return (
     <div className="stack">
@@ -4793,21 +5399,46 @@ function ReportDetailPanel({
           <strong>{report.completionRate}%</strong>
         </article>
         <article className="stat-card">
+          <span className="summary-label">Participants</span>
+          <strong>{participantCoverageLabel}</strong>
+        </article>
+        <article className="stat-card">
           <span className="summary-label">Average score</span>
           <strong>{report.averageScore !== null ? `${report.averageScore}%` : 'No score yet'}</strong>
+        </article>
+        <article className="stat-card">
+          <span className="summary-label">Follow-up actions</span>
+          <strong>{report.followUpCount}</strong>
         </article>
         <article className="stat-card">
           <span className="summary-label">Evidence</span>
           <strong>{report.evidenceStatus}</strong>
         </article>
         <article className="stat-card">
-          <span className="summary-label">Launch status</span>
-          <strong>{report.launchStatus.replace(/_/g, ' ')}</strong>
-        </article>
-        <article className="stat-card">
           <span className="summary-label">Review status</span>
-          <strong>{report.status.replace(/_/g, ' ')}</strong>
+          <strong>{formatReportStatusLabel(report.status)}</strong>
         </article>
+      </div>
+
+      <div className="detail-card">
+        <span className="summary-label">Review posture</span>
+        <div className="detail-grid report-detail-grid">
+          <div className="report-section">
+            <strong>Launch package</strong>
+            <p>{participantMetadata}</p>
+            <p className="table-note">
+              Launch {formatLaunchStatusLabel(report.launchStatus)} · {launchDateLabel}
+            </p>
+          </div>
+          <div className="report-section">
+            <strong>Evidence posture</strong>
+            <p>{buildReportEvidencePosture(report)}</p>
+          </div>
+          <div className="report-section full-width">
+            <strong>Immediate actions</strong>
+            <ListOrEmpty items={immediateActions} emptyLabel="No immediate actions are blocking evidence review." />
+          </div>
+        </div>
       </div>
 
       <div className="detail-card">
@@ -4816,7 +5447,7 @@ function ReportDetailPanel({
       </div>
 
       <div className="detail-card">
-        <span className="summary-label">Highlights</span>
+        <span className="summary-label">Review highlights</span>
         <ul className="muted-list">
           {report.highlights.map((highlight) => (
             <li key={highlight}>{highlight}</li>
@@ -4979,7 +5610,7 @@ function ReportDetailPanel({
               <tr key={run.id}>
                 <td>
                   <strong>{run.participantName}</strong>
-                  <div className="table-note">{run.participantRole}</div>
+                  <div className="table-note">{participantRoleLabel(run)}</div>
                 </td>
                 <td>
                   <span className={`badge status-${run.status}`}>{run.status.replace(/_/g, ' ')}</span>
@@ -5020,6 +5651,7 @@ function FacilitatorTabletopPanel({
   onSetPhase,
   onSetStatus,
   onOpenParticipantRun,
+  onOpenEvidence,
 }: {
   launch: LaunchDetail;
   notes: string;
@@ -5029,8 +5661,10 @@ function FacilitatorTabletopPanel({
   onSetPhase: (phase: TabletopPhase) => void;
   onSetStatus: (status: LaunchDetail['status']) => void;
   onOpenParticipantRun: (runId: string) => void;
+  onOpenEvidence: (launchId: string) => void;
 }) {
   const tabletopRunbook = buildTabletopRunbook(launch);
+  const immediateActions = buildLaunchImmediateActions(launch);
 
   return (
     <section className="stack">
@@ -5057,12 +5691,16 @@ function FacilitatorTabletopPanel({
             <strong>{launch.startsAt ?? 'Not scheduled'}</strong>
           </div>
           <div className="tabletop-hero-card">
-            <span className="summary-label">Roster</span>
-            <strong>{launch.participantRuns.length} seats</strong>
+            <span className="summary-label">Seat coverage</span>
+            <strong>
+              {launch.submittedCount}/{launch.participantCount} submitted
+            </strong>
           </div>
           <div className="tabletop-hero-card">
-            <span className="summary-label">Objective</span>
-            <strong>{launch.learningObjectives}</strong>
+            <span className="summary-label">Evidence posture</span>
+            <strong>
+              {launch.evidenceStatus} · {formatReportStatusLabel(launch.reportStatus)}
+            </strong>
           </div>
         </div>
       </div>
@@ -5152,6 +5790,17 @@ function FacilitatorTabletopPanel({
         </div>
 
         <div className="stack">
+          <div className="panel tabletop-sidebar-panel">
+            <h3>Session posture</h3>
+            <p className="subtle">{buildLaunchEvidencePosture(launch)}</p>
+            <ListOrEmpty items={immediateActions} emptyLabel="No immediate facilitator actions are blocking the session." />
+            <div className="button-row">
+              <button type="button" className="button-secondary" onClick={() => onOpenEvidence(launch.id)}>
+                Open evidence package
+              </button>
+            </div>
+          </div>
+
           <div className="panel tabletop-sidebar-panel">
             <div className="panel-header">
               <div>
@@ -5247,6 +5896,10 @@ function ParticipantExercisePanel({
           <article className="tabletop-hero-card">
             <span className="summary-label">Due</span>
             <strong>{run.dueAt ?? 'Not scheduled'}</strong>
+          </article>
+          <article className="tabletop-hero-card">
+            <span className="summary-label">Launch status</span>
+            <strong>{formatLaunchStatusLabel(run.launchStatus)}</strong>
           </article>
           <article className="tabletop-hero-card">
             <span className="summary-label">Score</span>
@@ -5360,6 +6013,12 @@ function ParticipantExercisePanel({
                 <strong>{run.startsAt ?? 'Not scheduled'}</strong>
               </div>
               <div className="key-value-row">
+                <span>Program posture</span>
+                <strong>
+                  {run.submittedCount}/{run.participantCount} submitted · {run.evidenceStatus} evidence
+                </strong>
+              </div>
+              <div className="key-value-row">
                 <span>Learning objective</span>
                 <strong>{run.learningObjectives}</strong>
               </div>
@@ -5461,10 +6120,9 @@ function LaunchTable({
       <thead>
         <tr>
           <th>Name</th>
-          <th>Mode</th>
-          <th>Audience</th>
-          <th>Status</th>
-          <th>Participants</th>
+          <th>Runtime</th>
+          <th>Coverage</th>
+          <th>Evidence</th>
           <th>Starts</th>
         </tr>
       </thead>
@@ -5477,20 +6135,47 @@ function LaunchTable({
           >
             <td>
               <strong>{launch.name}</strong>
+              <div className="table-note">
+                {formatLaunchModeLabel(launch.mode)} · {launch.audience}
+              </div>
               <div className="table-note">{launch.participantsLabel}</div>
             </td>
             <td>
-              {launch.mode === 'individual' ? 'Individual' : 'Tabletop'}
-              {launch.mode === 'tabletop' && launch.tabletopPhase ? (
-                <div className="table-note">{formatTabletopPhaseLabel(launch.tabletopPhase)}</div>
-              ) : null}
+              <div className="badge-row">
+                <span className={`badge status-${launch.status}`}>{formatLaunchStatusLabel(launch.status)}</span>
+                {launch.mode === 'tabletop' && launch.tabletopPhase ? (
+                  <span className="badge status-pending">{formatTabletopPhaseLabel(launch.tabletopPhase)}</span>
+                ) : null}
+              </div>
+              <div className="table-note">
+                {launch.reportStatus === 'closed'
+                  ? 'Closed-loop package'
+                  : launch.status === 'completed'
+                    ? 'Ready for review'
+                    : 'Live operational run'}
+              </div>
             </td>
-            <td>{launch.audience}</td>
             <td>
-              <span className={`badge status-${launch.status}`}>{launch.status.replace(/_/g, ' ')}</span>
+              <strong>
+                {launch.submittedCount}/{launch.participantCount} submitted
+              </strong>
+              <div className="table-note">
+                {launch.completionRate}% complete
+                {launch.inProgressCount > 0 ? ` · ${launch.inProgressCount} in progress` : ''}
+              </div>
             </td>
             <td>
-              {launch.completedCount}/{launch.participantCount}
+              <div className="badge-row">
+                <span className={`badge status-${launch.evidenceStatus}`}>{launch.evidenceStatus}</span>
+                <span className={`badge status-${launch.reportStatus}`}>{formatReportStatusLabel(launch.reportStatus)}</span>
+              </div>
+              <div className="table-note">
+                {launch.followUpCount > 0
+                  ? `${launch.followUpCount} follow-up action${launch.followUpCount === 1 ? '' : 's'} open`
+                  : launch.closedAt
+                    ? `Closed ${formatDate(launch.closedAt)}`
+                    : 'No open follow-up actions'}
+              </div>
             </td>
             <td>{launch.startsAt}</td>
           </tr>
@@ -5518,10 +6203,9 @@ function ReportTable({
       <thead>
         <tr>
           <th>Exercise</th>
-          <th>Completion</th>
-          <th>Average score</th>
-          <th>Evidence</th>
-          <th>Status</th>
+          <th>Posture</th>
+          <th>Participants</th>
+          <th>Follow-up</th>
           <th>Updated</th>
         </tr>
       </thead>
@@ -5532,14 +6216,40 @@ function ReportTable({
             className={onSelect ? `selectable-row${report.id === activeId ? ' active' : ''}` : undefined}
             onClick={onSelect ? () => onSelect(report.id) : undefined}
           >
-            <td>{report.name}</td>
-            <td>{report.completionRate}%</td>
-            <td>{report.averageScore !== null ? `${report.averageScore}%` : 'No score yet'}</td>
             <td>
-              <span className={`badge status-${report.evidenceStatus}`}>{report.evidenceStatus}</span>
+              <strong>{report.name}</strong>
+              <div className="table-note">
+                {formatLaunchModeLabel(report.mode)} · {report.audience}
+              </div>
+              <div className="table-note">
+                {report.startsAt === 'Not scheduled' ? 'Not scheduled' : `Starts ${formatDate(report.startsAt)}`}
+              </div>
             </td>
             <td>
-              <span className={`badge status-${report.status}`}>{report.status.replace('_', ' ')}</span>
+              <div className="badge-row">
+                <span className={`badge status-${report.status}`}>{formatReportStatusLabel(report.status)}</span>
+                <span className={`badge status-${report.evidenceStatus}`}>{report.evidenceStatus}</span>
+              </div>
+              <div className="table-note">Launch {formatLaunchStatusLabel(report.launchStatus)}</div>
+            </td>
+            <td>
+              <strong>
+                {report.submittedCount}/{report.participantCount} submitted
+              </strong>
+              <div className="table-note">
+                {report.completionRate}% complete
+                {report.averageScore !== null ? ` · ${report.averageScore}% avg score` : ' · No score yet'}
+              </div>
+            </td>
+            <td>
+              <strong>{report.followUpCount > 0 ? `${report.followUpCount} open` : 'None'}</strong>
+              <div className="table-note">
+                {report.closedAt
+                  ? `Closed ${formatDate(report.closedAt)}`
+                  : report.status === 'ready'
+                    ? 'Ready for operator closeout'
+                    : 'Still in active review'}
+              </div>
             </td>
             <td>{formatDate(report.lastUpdated)}</td>
           </tr>
@@ -5549,13 +6259,22 @@ function ReportTable({
   );
 }
 
-function makeDefaultDraftInput(template: ScenarioTemplate): ScenarioDraftInput {
+function makeDefaultDraftInput(
+  template: ScenarioTemplate,
+  documents: DocumentSummary[],
+  contextBuckets: ContextBucket[],
+): ScenarioDraftInput {
   return {
     title: defaultTitleForTemplate(template),
     templateId: template.id,
     audience: template.primaryAudience,
-    launchMode: 'individual',
+    launchMode: defaultLaunchModeForTemplate(template),
     difficulty: 'medium',
+    triggerEvent: defaultTriggerEventForTemplate(template),
+    scenarioScope: defaultScenarioScopeForTemplate(template),
+    evidenceFocus: defaultEvidenceFocusForTemplate(template),
+    selectedDocumentIds: defaultSelectedDocumentIds(template, documents),
+    selectedContextItemIds: defaultSelectedContextItemIds(contextBuckets),
     learningObjectives: `Validate how ${template.primaryAudience.toLowerCase()} should respond using the firm's own procedures and escalation paths.`,
     approvalStatus: 'draft',
     scheduledStartAt: null,
@@ -5639,14 +6358,223 @@ function defaultTitleForTemplate(template: ScenarioTemplate): string {
   return `${template.name} Draft`;
 }
 
+function defaultLaunchModeForTemplate(template: ScenarioTemplate): LaunchMode {
+  return template.id === 'executive-tabletop' || template.id === 'critical-vendor-outage' ? 'tabletop' : 'individual';
+}
+
+function defaultTriggerEventForTemplate(template: ScenarioTemplate): string {
+  if (template.id === 'critical-vendor-outage') {
+    return 'A critical vendor outage interrupts a core workflow and forces an executive continuity decision before client deadlines slip.';
+  }
+  if (template.id === 'executive-tabletop') {
+    return 'A fast-moving disruption reaches the executive team before communications ownership and regulator posture are aligned.';
+  }
+  return 'An operational disruption triggers the first escalation and forces the team to follow the firm’s incident procedures under time pressure.';
+}
+
+function defaultScenarioScopeForTemplate(template: ScenarioTemplate): string {
+  if (template.id === 'critical-vendor-outage') {
+    return 'Cover the first hour of continuity decisions, manual-workaround approval, executive communications, and external escalation.';
+  }
+  if (template.id === 'executive-tabletop') {
+    return 'Focus on leadership decision rights, message ownership, regulator sequencing, and coordination handoffs.';
+  }
+  return 'Cover the initial response window, cross-functional escalation path, impact assessment, and next-action ownership.';
+}
+
+function defaultEvidenceFocusForTemplate(template: ScenarioTemplate): string {
+  if (template.id === 'critical-vendor-outage') {
+    return 'Capture continuity decision quality, workaround approval timing, communications ownership, and follow-up actions.';
+  }
+  if (template.id === 'executive-tabletop') {
+    return 'Capture leadership decisions, communications handoffs, regulator/customer sequencing, and after-action follow-ups.';
+  }
+  return 'Capture first escalation quality, impact assessment, policy acknowledgement, and next required action.';
+}
+
+function defaultSelectedDocumentIds(template: ScenarioTemplate, documents: DocumentSummary[]): string[] {
+  const approvedDocuments = documents.filter((document) => document.parseStatus === 'approved');
+  if (approvedDocuments.length === 0) return [];
+
+  const matches = approvedDocuments.filter((document) => {
+    const haystack = `${document.name} ${document.type}`.toLowerCase();
+    return template.recommendedInputs.some((input) => haystack.includes(input.toLowerCase()));
+  });
+
+  return (matches.length > 0 ? matches : approvedDocuments.slice(0, 2)).map((document) => document.id);
+}
+
+function defaultSelectedContextItemIds(contextBuckets: ContextBucket[]): string[] {
+  return contextBuckets.flatMap((bucket) =>
+    bucket.items.filter((item) => item.reviewState === 'confirmed' && item.required).map((item) => item.id),
+  );
+}
+
+function toggleStringSelection(current: string[], value: string): string[] {
+  return current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value];
+}
+
+function buildScenarioStudioOutline(
+  template: ScenarioTemplate,
+  form: ScenarioDraftInput,
+  selectedMaterials: DocumentSummary[],
+  selectedContextItems: Array<ContextItem & { bucketLabel: string }>,
+): Array<{ label: string; note: string }> {
+  const selectedBuckets = Array.from(new Set(selectedContextItems.map((item) => item.bucketLabel)));
+  const materialNames = selectedMaterials.map((document) => document.name);
+
+  return [
+    {
+      label: 'Trigger',
+      note: form.triggerEvent || `Start from the ${template.name.toLowerCase()} trigger moment.`,
+    },
+    {
+      label: 'Scope',
+      note: form.scenarioScope || 'Define the teams, time window, and decision boundary before launch.',
+    },
+    {
+      label: 'Grounding inputs',
+      note:
+        materialNames.length > 0
+          ? `Ground the draft in ${formatReadableList(materialNames)} with context from ${selectedBuckets.length > 0 ? formatReadableList(selectedBuckets) : 'reviewed context inputs'}.`
+          : 'Attach approved materials and confirmed context so the draft reflects the firm rather than generic training copy.',
+    },
+    {
+      label: 'Evidence output',
+      note: form.evidenceFocus || 'Define what reviewers should learn later from participant responses and facilitator notes.',
+    },
+  ];
+}
+
 function formatDate(value: string): string {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   return value.slice(0, 10);
 }
 
+function formatLaunchModeLabel(value: LaunchMode): string {
+  return value === 'tabletop' ? 'Tabletop' : 'Individual';
+}
+
+function formatLaunchStatusLabel(value: ReportDetail['launchStatus'] | ReportSummary['launchStatus']): string {
+  return value.replace(/_/g, ' ');
+}
+
+function formatReportStatusLabel(value: ReportDetail['status'] | ReportSummary['status']): string {
+  return value.replace(/_/g, ' ');
+}
+
 function formatTabletopPhaseLabel(value: TabletopPhase | null | undefined): string {
   if (!value) return 'Not started';
   return value.replace(/_/g, ' ');
+}
+
+function buildLaunchEvidencePosture(launch: LaunchDetail): string {
+  if (launch.reportStatus === 'closed' && launch.closedAt) {
+    return `Evidence package closed ${formatDate(launch.closedAt)} after operator review and closeout.`;
+  }
+
+  if (launch.evidenceStatus !== 'ready') {
+    return 'Evidence is still open because the launch does not yet have enough submitted participant responses for review.';
+  }
+
+  if (launch.reportStatus === 'ready') {
+    return 'Launch evidence is ready for operator closeout, export, and follow-up tracking.';
+  }
+
+  return 'Evidence is available, but review remains open while participant completion and follow-up work continue.';
+}
+
+function buildLaunchImmediateActions(launch: LaunchDetail): string[] {
+  if (launch.reportStatus === 'closed') {
+    if (launch.followUpCount > 0) {
+      return [`${launch.followUpCount} follow-up action${launch.followUpCount === 1 ? '' : 's'} remain open after package closeout.`];
+    }
+
+    return ['Launch evidence is closed and no immediate operator actions remain open.'];
+  }
+
+  const actions: string[] = [];
+
+  if (launch.participantCount === 0) {
+    actions.push('Assign the intended team or named participants before treating this launch as live operational work.');
+  }
+
+  const outstandingCount = Math.max(launch.participantCount - launch.submittedCount, 0);
+  if (outstandingCount > 0) {
+    actions.push(
+      `Follow up with ${outstandingCount} participant${outstandingCount === 1 ? '' : 's'} who still have not submitted a complete response.`,
+    );
+  }
+
+  if (launch.followUpCount > 0) {
+    actions.push(
+      `Resolve ${launch.followUpCount} operator follow-up action${launch.followUpCount === 1 ? '' : 's'} before treating the launch as closed-loop.`,
+    );
+  }
+
+  if (launch.mode === 'tabletop' && launch.status !== 'in_progress') {
+    actions.push('Move the tabletop session into active facilitator control before relying on it as a live exercise record.');
+  }
+
+  if (actions.length === 0 && launch.evidenceStatus === 'ready') {
+    actions.push('Launch is ready for operator review, evidence closeout, and export.');
+  }
+
+  return actions;
+}
+
+function buildReportEvidencePosture(report: ReportDetail): string {
+  if (report.closedAt) {
+    return `Evidence package closed ${formatDate(report.closedAt)}${report.closedByName ? ` by ${report.closedByName}` : ''}.`;
+  }
+
+  if (report.evidenceStatus !== 'ready') {
+    return 'Evidence is still open because the launch does not yet have enough submitted participant responses for closeout.';
+  }
+
+  if (report.status === 'ready') {
+    return 'Evidence is ready for operator closeout, export, and follow-up tracking.';
+  }
+
+  return 'Evidence is available, but review remains open while participant completion and follow-up work continue.';
+}
+
+function buildReportImmediateActions(report: ReportDetail): string[] {
+  if (report.status === 'closed') {
+    if (report.followUpCount > 0) {
+      return [`${report.followUpCount} follow-up action${report.followUpCount === 1 ? '' : 's'} remain open after package closeout.`];
+    }
+
+    return ['Evidence package is closed and no follow-up actions remain open.'];
+  }
+
+  const actions: string[] = [];
+
+  if (report.evidenceStatus !== 'ready') {
+    actions.push('Collect at least one submitted participant response before closing or exporting this evidence package.');
+  }
+
+  if (report.outstandingCount > 0) {
+    actions.push(
+      `Follow up with ${report.outstandingCount} participant${report.outstandingCount === 1 ? '' : 's'} who still have not submitted a complete response.`,
+    );
+  }
+
+  if (report.followUpCount > 0) {
+    actions.push(
+      `Track ${report.followUpCount} operator follow-up action${report.followUpCount === 1 ? '' : 's'} before the launch is treated as closed-loop.`,
+    );
+  }
+
+  if (report.noteCount === 0 && report.submittedCount > 0) {
+    actions.push('Capture at least one participant after-action note so the evidence package contains qualitative findings, not just checkpoint scores.');
+  }
+
+  if (actions.length === 0 && report.evidenceStatus === 'ready') {
+    actions.push('Package is ready for operator closeout and export.');
+  }
+
+  return actions;
 }
 
 function formatScenarioApprovalStatusLabel(value: ScenarioDraft['approvalStatus']): string {
@@ -5679,6 +6607,10 @@ function formatWorkspaceScopeLabel(
   if (scopeTeams.length > 0) return scopeTeams.join(', ');
   if (fallbackTeam) return `${fallbackTeam} (linked roster)`;
   return 'No team scope';
+}
+
+function normalizeIdentityEmailValue(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function formatInviteMagicLinkState(invite: WorkspaceInvite): string {
@@ -5731,6 +6663,13 @@ function formatBucketLabel(bucketId: string): string {
 
 function formatStorageBackendLabel(storageBackend: 'inline' | 'r2'): string {
   return storageBackend === 'r2' ? 'Stored file' : 'Inline text';
+}
+
+function formatReadableList(items: string[]): string {
+  if (items.length === 0) return '';
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`;
 }
 
 function formatExtractionMethodLabel(value: SourceExtractionProvenance['method']): string {

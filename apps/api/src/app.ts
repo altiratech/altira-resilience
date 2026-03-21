@@ -65,6 +65,7 @@ import {
   normalizeParticipantRunPatch,
   normalizeRosterMemberInput,
   normalizeRosterMemberPatch,
+  normalizeIdentityEmail,
   normalizeWorkspaceInviteInput,
   normalizeWorkspaceInvitePatch,
   normalizeWorkspaceUserInput,
@@ -212,6 +213,19 @@ export function createApp(storeOverride?: ResilienceStore) {
     }
 
     let workspaceUser = await store.getWorkspaceUserByEmail(invite.email);
+    const workspaceUsers = await store.listWorkspaceUsers();
+    const conflictingRosterUser = invite.rosterMemberId
+      ? findWorkspaceUserByRosterMemberId(workspaceUsers, invite.rosterMemberId, workspaceUser?.id ?? null)
+      : null;
+
+    if (conflictingRosterUser) {
+      return c.json(
+        { error: 'Invite access conflicts with another workspace user already linked to that roster member.' },
+        409,
+      );
+    }
+
+    let reconciliationDetail = 'Invite accepted through a magic-link sign-in.';
     if (!workspaceUser) {
       workspaceUser = await store.createWorkspaceUser({
         fullName: invite.fullName,
@@ -222,10 +236,27 @@ export function createApp(storeOverride?: ResilienceStore) {
         rosterMemberId: invite.rosterMemberId,
         status: 'active',
       });
+      reconciliationDetail = 'Invite accepted through a magic-link sign-in. Created a new workspace user.';
     }
 
     if (workspaceUser.status !== 'active') {
       return c.json({ error: 'Workspace user is inactive. Ask an admin to reactivate the account.' }, 403);
+    }
+
+    const reconciledUser = await store.updateWorkspaceUser(workspaceUser.id, {
+      fullName: invite.fullName,
+      email: invite.email,
+      role: invite.role,
+      capabilities: invite.capabilities,
+      scopeTeams: invite.scopeTeams,
+      rosterMemberId: invite.rosterMemberId,
+    });
+    if (!reconciledUser) {
+      return c.json({ error: 'Unable to reconcile the invited workspace user.' }, 500);
+    }
+    workspaceUser = reconciledUser;
+    if (reconciliationDetail === 'Invite accepted through a magic-link sign-in.') {
+      reconciliationDetail = 'Invite accepted through a magic-link sign-in. Reconciled the existing workspace user to the staged access.';
     }
 
     await store.acceptWorkspaceInvite(invite.id, workspaceUser.id);
@@ -234,7 +265,7 @@ export function createApp(storeOverride?: ResilienceStore) {
         workspaceUser,
         'workspace_invite_accepted',
         invite,
-        'Invite accepted through a magic-link sign-in.',
+        reconciliationDetail,
       ),
     );
 
@@ -720,6 +751,12 @@ export function createApp(storeOverride?: ResilienceStore) {
       return c.json({ error: 'Invalid roster member payload.' }, 400);
     }
 
+    const rosterMembers = await store.listRosterMembers();
+    const conflictingRosterMember = findRosterMemberByEmail(rosterMembers, input.email);
+    if (conflictingRosterMember) {
+      return c.json({ error: 'A roster member already exists for that email.' }, 409);
+    }
+
     const rosterMember = await store.createRosterMember(input);
     return c.json({ rosterMember }, 201);
   });
@@ -731,6 +768,19 @@ export function createApp(storeOverride?: ResilienceStore) {
 
     const memberId = c.req.param('memberId');
     const patch = normalizeRosterMemberPatch(await c.req.json<Partial<RosterMemberPatch>>());
+    const existingRosterMember = await store.getRosterMember(memberId);
+    if (!existingRosterMember) {
+      return c.json({ error: 'Roster member not found.' }, 404);
+    }
+
+    if (patch.email) {
+      const rosterMembers = await store.listRosterMembers();
+      const conflictingRosterMember = findRosterMemberByEmail(rosterMembers, patch.email, memberId);
+      if (conflictingRosterMember) {
+        return c.json({ error: 'Another roster member already uses that email.' }, 409);
+      }
+    }
+
     const rosterMember = await store.updateRosterMember(memberId, patch);
 
     if (!rosterMember) {
@@ -770,6 +820,19 @@ export function createApp(storeOverride?: ResilienceStore) {
       return c.json({ error: 'A pending invite already exists for that email. Revoke or accept it before creating a user directly.' }, 409);
     }
 
+    if (input.rosterMemberId) {
+      const [workspaceUsers, workspaceInvites] = await Promise.all([store.listWorkspaceUsers(), store.listWorkspaceInvites()]);
+      const conflictingWorkspaceUser = findWorkspaceUserByRosterMemberId(workspaceUsers, input.rosterMemberId);
+      if (conflictingWorkspaceUser) {
+        return c.json({ error: 'Another workspace user is already linked to that roster member.' }, 409);
+      }
+
+      const conflictingInvite = findPendingInviteByRosterMemberId(workspaceInvites, input.rosterMemberId);
+      if (conflictingInvite) {
+        return c.json({ error: 'A pending invite is already staged for that roster member.' }, 409);
+      }
+    }
+
     const workspaceUser = await store.createWorkspaceUser(input);
     await store.createAuditEvent(buildWorkspaceUserAuditEvent(currentUser, null, workspaceUser));
     return c.json({ workspaceUser }, 201);
@@ -791,6 +854,26 @@ export function createApp(storeOverride?: ResilienceStore) {
       const existingUser = await store.getWorkspaceUserByEmail(patch.email);
       if (existingUser && existingUser.id !== userId) {
         return c.json({ error: 'Another workspace user already uses that email.' }, 409);
+      }
+
+      const pendingInvite = await store.getPendingWorkspaceInviteByEmail(patch.email);
+      if (pendingInvite) {
+        return c.json({ error: 'A pending invite already exists for that email. Resolve it before moving another user onto that address.' }, 409);
+      }
+    }
+
+    const nextRosterMemberId =
+      patch.rosterMemberId === undefined ? existingWorkspaceUser.rosterMemberId : patch.rosterMemberId;
+    if (nextRosterMemberId) {
+      const [workspaceUsers, workspaceInvites] = await Promise.all([store.listWorkspaceUsers(), store.listWorkspaceInvites()]);
+      const conflictingWorkspaceUser = findWorkspaceUserByRosterMemberId(workspaceUsers, nextRosterMemberId, userId);
+      if (conflictingWorkspaceUser) {
+        return c.json({ error: 'Another workspace user is already linked to that roster member.' }, 409);
+      }
+
+      const conflictingInvite = findPendingInviteByRosterMemberId(workspaceInvites, nextRosterMemberId);
+      if (conflictingInvite) {
+        return c.json({ error: 'A pending invite is already staged for that roster member.' }, 409);
       }
     }
 
@@ -850,6 +933,19 @@ export function createApp(storeOverride?: ResilienceStore) {
     const existingInvite = await store.getPendingWorkspaceInviteByEmail(input.email);
     if (existingInvite) {
       return c.json({ error: 'A pending invite already exists for that email.' }, 409);
+    }
+
+    if (input.rosterMemberId) {
+      const [workspaceUsers, workspaceInvites] = await Promise.all([store.listWorkspaceUsers(), store.listWorkspaceInvites()]);
+      const conflictingWorkspaceUser = findWorkspaceUserByRosterMemberId(workspaceUsers, input.rosterMemberId);
+      if (conflictingWorkspaceUser) {
+        return c.json({ error: 'Another workspace user is already linked to that roster member.' }, 409);
+      }
+
+      const conflictingInvite = findPendingInviteByRosterMemberId(workspaceInvites, input.rosterMemberId);
+      if (conflictingInvite) {
+        return c.json({ error: 'A pending invite is already staged for that roster member.' }, 409);
+      }
     }
 
     const workspaceInvite = await store.createWorkspaceInvite({
@@ -931,6 +1027,19 @@ export function createApp(storeOverride?: ResilienceStore) {
       const otherPendingInvite = await store.getPendingWorkspaceInviteByEmail(existingInvite.email);
       if (otherPendingInvite && otherPendingInvite.id !== inviteId) {
         return c.json({ error: 'Another pending invite already exists for that email.' }, 409);
+      }
+
+      if (existingInvite.rosterMemberId) {
+        const [workspaceUsers, workspaceInvites] = await Promise.all([store.listWorkspaceUsers(), store.listWorkspaceInvites()]);
+        const conflictingWorkspaceUser = findWorkspaceUserByRosterMemberId(workspaceUsers, existingInvite.rosterMemberId);
+        if (conflictingWorkspaceUser) {
+          return c.json({ error: 'A workspace user is already linked to that roster member.' }, 409);
+        }
+
+        const conflictingInvite = findPendingInviteByRosterMemberId(workspaceInvites, existingInvite.rosterMemberId, inviteId);
+        if (conflictingInvite) {
+          return c.json({ error: 'Another pending invite is already staged for that roster member.' }, 409);
+        }
       }
     }
 
@@ -1183,12 +1292,14 @@ export function createApp(storeOverride?: ResilienceStore) {
       return c.json({ error: 'You do not have access to this participant run.' }, 403);
     }
 
-    const launch = await store.getLaunch(run.launchId);
+    const [launch, launchRuns] = await Promise.all([store.getLaunch(run.launchId), store.listParticipantRuns(run.launchId)]);
     if (!launch) {
       return c.json({ error: 'Launch not found for participant run.' }, 404);
     }
 
-    return c.json({ run: buildParticipantRunDetail(launch, run) });
+    const visibleLaunchRuns = filterParticipantRunsForUser(currentUser, launchRuns, rosterMembers);
+
+    return c.json({ run: buildParticipantRunDetail(launch, run, visibleLaunchRuns) });
   });
 
   app.patch('/api/v1/participant-runs/:runId', async (c) => {
@@ -1450,6 +1561,42 @@ function readFormString(form: FormData, key: string): string | null {
   return typeof value === 'string' ? value : null;
 }
 
+function findRosterMemberByEmail(
+  rosterMembers: RosterMember[],
+  email: string,
+  excludedRosterMemberId?: string,
+): RosterMember | null {
+  const normalizedEmail = normalizeIdentityEmail(email);
+  return (
+    rosterMembers.find(
+      (member) => member.id !== excludedRosterMemberId && normalizeIdentityEmail(member.email) === normalizedEmail,
+    ) ?? null
+  );
+}
+
+function findWorkspaceUserByRosterMemberId(
+  workspaceUsers: WorkspaceUser[],
+  rosterMemberId: string,
+  excludedWorkspaceUserId?: string | null,
+): WorkspaceUser | null {
+  return (
+    workspaceUsers.find((user) => user.id !== excludedWorkspaceUserId && user.rosterMemberId === rosterMemberId) ?? null
+  );
+}
+
+function findPendingInviteByRosterMemberId(
+  workspaceInvites: WorkspaceInvite[],
+  rosterMemberId: string,
+  excludedInviteId?: string,
+): WorkspaceInvite | null {
+  return (
+    workspaceInvites.find(
+      (invite) =>
+        invite.id !== excludedInviteId && invite.status === 'pending' && invite.rosterMemberId === rosterMemberId,
+    ) ?? null
+  );
+}
+
 async function resolveCurrentUser(c: AppContext, store: ResilienceStore): Promise<WorkspaceUser | Response> {
   const session = await requireResolvedSession(c, store);
   if (session instanceof Response) return session;
@@ -1575,7 +1722,15 @@ function resolveCorsOrigin(env: Bindings | undefined, origin: string | undefined
 
   const configuredOrigins = parseAllowedOrigins(env?.APP_ALLOWED_ORIGINS);
   if (configuredOrigins.length > 0) {
-    return configuredOrigins.includes(origin) ? origin : null;
+    if (configuredOrigins.includes(origin)) {
+      return origin;
+    }
+
+    if (isAllowedPagesPreviewOrigin(env, origin, configuredOrigins)) {
+      return origin;
+    }
+
+    return null;
   }
 
   if (isLocalStage(env) && isLoopbackOrigin(origin)) {
@@ -1609,6 +1764,32 @@ function parseAllowedOrigins(value: string | undefined): string[] {
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+function isAllowedPagesPreviewOrigin(
+  env: Bindings | undefined,
+  origin: string,
+  configuredOrigins: string[],
+): boolean {
+  if (getAppStage(env).toLowerCase() !== 'preview') {
+    return false;
+  }
+
+  try {
+    const originUrl = new URL(origin);
+    const hasPagesProjectOrigin = configuredOrigins.some((entry) => new URL(entry).hostname === 'altira-resilience-web.pages.dev');
+
+    if (!hasPagesProjectOrigin) {
+      return false;
+    }
+
+    return (
+      originUrl.hostname === 'altira-resilience-web.pages.dev' ||
+      originUrl.hostname.endsWith('.altira-resilience-web.pages.dev')
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isLoopbackOrigin(origin: string): boolean {
@@ -1897,7 +2078,7 @@ function buildScenarioDraftAuditEvent(
 
 function buildScenarioDraftAuditDetail(draft: ScenarioDraft): string {
   const note = draft.reviewerNotes ? ` · note ${draft.reviewerNotes}` : '';
-  return `${draft.audience} · ${draft.launchMode === 'tabletop' ? 'Tabletop' : 'Individual'}${note}`;
+  return `${draft.audience} · ${draft.launchMode === 'tabletop' ? 'Tabletop' : 'Individual'} · trigger ${draft.triggerEvent}${note}`;
 }
 
 function buildWorkspaceUserAuditEvent(

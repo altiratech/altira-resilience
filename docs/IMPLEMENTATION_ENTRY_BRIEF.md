@@ -97,6 +97,22 @@ The current implemented foundation is:
 54. `apps/api/wrangler.toml` now carries a concrete `preview` env block for `APP_STAGE`, `APP_BASE_URL`, `APP_ALLOWED_ORIGINS`, and `INVITE_EMAIL_PROVIDER`
 55. the first Cloudflare-managed preview pair is now live on `https://altira-resilience-web.pages.dev` with API `https://altira-resilience-api-preview.rjameson.workers.dev`
 56. deployed preview validation now covers real sign-in, authenticated Overview load, and sign-out in the browser instead of only local Vite review
+57. staged preview auth now routes browser `/api/*` traffic through Cloudflare Pages Functions in `apps/web/functions`, so session cookies stay first-party on `pages.dev` instead of depending on a cross-site `workers.dev` cookie path
+58. the first staged-preview product review now sets the next product-depth order explicitly: make `Evidence` and the preview workspace tell a believable operational story first, then deepen `Scenario Studio`, then deepen launches/runtime behavior
+59. launches can now be renamed after creation, which matters because recurring exercises will often reuse the same approved draft but still need distinct run names for review, evidence, and after-action work
+60. the seeded workspace story now includes one active individual exercise, one upcoming tabletop, and one closed evidence package so `Overview`, `Exercises`, and `Evidence` do not open as mostly empty shells
+61. Scenario Studio now persists the operator-authored trigger event, scenario scope, and evidence focus for each draft instead of relying mainly on title/objective text
+62. Scenario Studio now stores the approved materials and confirmed context inputs selected for each exercise draft, so authoring decisions remain reviewable and stable after save
+63. the studio configuration surface now shows readiness counts, a structured exercise outline, and a launch-package summary while the draft is being authored
+64. launch queue rows now show runtime posture, submission coverage, evidence posture, and open follow-up load instead of acting mostly like record listings
+65. launch detail now opens with exercise-package posture, evidence posture, immediate actions, and direct links into facilitator control or the matching evidence package
+66. tabletop control now shows session posture and immediate operational actions, tying facilitator workflow back into the same evidence package used for closeout/export
+67. participant run detail now shows launch/program posture so individual exercise work is visibly part of the broader readiness loop rather than an isolated worksheet
+68. `People` now treats participant directory and workspace access as one readiness-operations surface instead of separate admin islands
+69. roster rows now show direct access posture, admins can jump from a roster member into workspace access, and access management now surfaces team coverage, pending activation, and roster-linked access gaps by default
+70. roster, workspace-user, and pending-invite email identity now normalize consistently during create/update flows instead of depending on caller casing
+71. accepting a pending invite now reconciles an existing active workspace user to the staged role, scope, capability, and roster link instead of silently keeping stale access
+72. `People` no longer treats active email-matched workspace access as a false coverage gap; those records now show up as explicit link follow-up instead
 
 Runtime split now fixed:
 - individual exercise runs remain participant-owned and deterministically scored
@@ -107,23 +123,59 @@ Why:
 - it exercises the admin workflow first
 - it keeps auth, ingestion, and deeper scenario logic deferred until the object model is stable
 
+## Screenshot-Driven Priority Order
+
+The first staged-preview product review changed the next build priorities.
+
+What the screenshots showed:
+
+- the shell and navigation are now strong enough to carry the product
+- `Overview` and `Materials` feel substantially more real than the other surfaces
+- `Exercises` has the right shape, but still needs deeper working content
+- `Evidence` and `Settings` currently feel too empty to prove the product
+- the next wins should come from making the default workspace tell a believable readiness-program story, not from another shell redesign
+
+Prioritized next build order:
+
+1. make an explicit tenanting call before widening preview usage
+   - either keep the current single curated workspace intentionally narrow for the preview period
+   - or start introducing true workspace scoping into persistence before we broaden tester access
+2. decide the long-term role of `Settings`
+   - either deepen `Settings` into a real control surface or keep it intentionally slim
+   - avoid adding filler there just to make the page feel busier
+3. keep preview workspace coherence across `Overview`, `Exercises`, `Evidence`, and `People`
+   - maintain one active exercise, one upcoming launch, and one completed/closed package so the product keeps reading like a live program instead of an empty console
+
 ## Immediate Next Build Block
 
-1. keep the new workspace-user admin, invite flow, and manager team-scope model as the bridge layer until shared Altira auth exists
-2. keep provider-backed invite delivery on top of the existing magic-link bridge, and wire real preview sender config before outside testers depend on it
-3. keep the new membership-lifecycle controls operator-owned and decide whether manager scope should stay admin-managed only or gain a request / approval flow
-4. keep the new audit trail lightweight and operator-readable rather than widening it into a full approval engine too early
-5. keep the provider/versioning/provenance boundary in `docs/AI_DOCUMENT_BOUNDARY.md` as the rule for future ingestion work
-6. keep legacy `.doc`, `.xls`, and `.ppt` explicitly unsupported in v1 rather than widening ingestion scope
-7. keep extraction review-gated so uploaded materials still require operator approval before they change context
-8. keep visible roles simple as `user`, `manager`, and `admin`, adding product-specific capability flags only when needed
-9. keep the current workspace-email sign-in for active users plus invite-based magic-link activation for pending invites as the bridge until shared Altira auth exists, then layer Google / SSO onto the same model
-10. preserve the new buyer-facing readiness-OS IA rather than drifting back toward implementation-shaped navigation
-11. keep the preview/demo workspace coherent so first-look product reviews are not polluted by validation artifacts, test fixtures, or internal build-state copy
-12. keep deployed preview access on explicit origins only, with debug auth shortcuts disabled unless a local-only flag is intentionally turned on
-13. configure a real preview email sender, preview base URL, and deployed cookie/origin behavior before opening a tester-facing domain
-14. deploy the web app with an explicit `VITE_API_URL` and validate browser sign-in/session behavior on a real preview origin instead of relying on local proxy behavior
-15. keep the current Pages + workers.dev staging pair stable before binding `resilience.altiratech.com`
+1. `Evidence` is now materially deeper and should be treated as good enough for this pass:
+   - queue rows now show posture, participant coverage, and follow-up load
+   - detail now opens with review posture, immediate actions, closeout state, and export readiness
+2. treat the newly deeper `Scenario Studio` as complete enough for this pass and resist reopening the shell or IA again right now
+3. keep the staged preview workspace proving the product by default:
+   - one active exercise
+   - one upcoming launch
+   - one evidence package in review
+   - one closed evidence package
+4. treat `People` as materially deeper for this pass:
+   - roster and workspace access now read as one connected operator workflow
+   - access coverage, pending activation, and roster-linked cleanup now show up directly in the product
+5. treat the identity-integrity pass as done for now:
+   - email identity is now normalized consistently across roster members, workspace users, and pending invites
+   - pending invite acceptance now reconciles existing active users instead of silently preserving stale access
+   - `People` now distinguishes true gaps from email-matched link follow-up
+6. decide whether `Settings` should deepen into a real control surface or remain intentionally slim, and avoid adding filler there in the meantime
+7. keep the current workspace-user admin, invite flow, and manager team-scope model as the bridge layer until shared Altira auth exists
+8. keep provider-backed invite delivery on top of the existing magic-link bridge, but treat preview sender config as deployment work rather than the main product task
+9. keep the new audit trail lightweight and operator-readable rather than widening it into a full approval engine too early
+10. keep the provider/versioning/provenance boundary in `docs/AI_DOCUMENT_BOUNDARY.md` as the rule for future ingestion work
+11. keep legacy `.doc`, `.xls`, and `.ppt` explicitly unsupported in v1 rather than widening ingestion scope
+12. keep extraction review-gated so uploaded materials still require operator approval before they change context
+13. keep visible roles simple as `user`, `manager`, and `admin`, adding product-specific capability flags only when needed
+14. keep the current workspace-email sign-in for active users plus invite-based magic-link activation for pending invites as the bridge until shared Altira auth exists, then layer Google / SSO onto the same model
+14. preserve the new buyer-facing readiness-OS IA rather than drifting back toward implementation-shaped navigation
+15. keep deployed preview access on explicit origins only, with debug auth shortcuts disabled unless a local-only flag is intentionally turned on
+16. keep the current Pages + Workers staged-preview pair stable while product-depth work continues, and bind `resilience.altiratech.com` only after the preview checklist is honestly complete
 
 ## Canonical Inputs
 

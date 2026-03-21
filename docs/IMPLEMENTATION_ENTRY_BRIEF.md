@@ -26,10 +26,15 @@ This brief exists so the repo can be opened and understood quickly at the start 
 ## What Is Not Fixed Yet
 
 - shared suite auth provider / Google / SSO approach
-- tenant-safe identity and access boundaries across admin/operator, manager-review, and user exercise surfaces
+- real multi-workspace identity and access boundaries beyond the intentional single-workspace private preview
 - broader scoring / scenario logic beyond the first deterministic checkpoints
 
 These are the next implementation choices after the architecture lock.
+
+Current preview lock:
+
+- keep Altira Resilience intentionally single-workspace for the curated private preview period
+- do not widen into true workspace scoping until after this preview period or before broader customer rollout
 
 ## Recommended First Runnable Slice
 
@@ -137,13 +142,10 @@ What the screenshots showed:
 
 Prioritized next build order:
 
-1. make an explicit tenanting call before widening preview usage
-   - either keep the current single curated workspace intentionally narrow for the preview period
-   - or start introducing true workspace scoping into persistence before we broaden tester access
-2. decide the long-term role of `Settings`
+1. decide the long-term role of `Settings`
    - either deepen `Settings` into a real control surface or keep it intentionally slim
    - avoid adding filler there just to make the page feel busier
-3. keep preview workspace coherence across `Overview`, `Exercises`, `Evidence`, and `People`
+2. keep preview workspace coherence across `Overview`, `Exercises`, `Evidence`, and `People`
    - maintain one active exercise, one upcoming launch, and one completed/closed package so the product keeps reading like a live program instead of an empty console
 
 ## Immediate Next Build Block
@@ -164,18 +166,21 @@ Prioritized next build order:
    - email identity is now normalized consistently across roster members, workspace users, and pending invites
    - pending invite acceptance now reconciles existing active users instead of silently preserving stale access
    - `People` now distinguishes true gaps from email-matched link follow-up
-6. decide whether `Settings` should deepen into a real control surface or remain intentionally slim, and avoid adding filler there in the meantime
-7. keep the current workspace-user admin, invite flow, and manager team-scope model as the bridge layer until shared Altira auth exists
-8. keep provider-backed invite delivery on top of the existing magic-link bridge, but treat preview sender config as deployment work rather than the main product task
-9. keep the new audit trail lightweight and operator-readable rather than widening it into a full approval engine too early
-10. keep the provider/versioning/provenance boundary in `docs/AI_DOCUMENT_BOUNDARY.md` as the rule for future ingestion work
-11. keep legacy `.doc`, `.xls`, and `.ppt` explicitly unsupported in v1 rather than widening ingestion scope
-12. keep extraction review-gated so uploaded materials still require operator approval before they change context
-13. keep visible roles simple as `user`, `manager`, and `admin`, adding product-specific capability flags only when needed
-14. keep the current workspace-email sign-in for active users plus invite-based magic-link activation for pending invites as the bridge until shared Altira auth exists, then layer Google / SSO onto the same model
-14. preserve the new buyer-facing readiness-OS IA rather than drifting back toward implementation-shaped navigation
-15. keep deployed preview access on explicit origins only, with debug auth shortcuts disabled unless a local-only flag is intentionally turned on
-16. keep the current Pages + Workers staged-preview pair stable while product-depth work continues, and bind `resilience.altiratech.com` only after the preview checklist is honestly complete
+6. keep the current preview intentionally single-workspace for this curated period:
+   - do not create separate customer workspaces on the current preview data model
+   - revisit true workspace scoping only after this preview period or before broader rollout
+7. decide whether `Settings` should deepen into a real control surface or remain intentionally slim, and avoid adding filler there in the meantime
+8. keep the current workspace-user admin, invite flow, and manager team-scope model as the bridge layer until shared Altira auth exists
+9. keep provider-backed invite delivery on top of the existing magic-link bridge, but treat preview sender config as deployment work rather than the main product task
+10. keep the new audit trail lightweight and operator-readable rather than widening it into a full approval engine too early
+11. keep the provider/versioning/provenance boundary in `docs/AI_DOCUMENT_BOUNDARY.md` as the rule for future ingestion work
+12. keep legacy `.doc`, `.xls`, and `.ppt` explicitly unsupported in v1 rather than widening ingestion scope
+13. keep extraction review-gated so uploaded materials still require operator approval before they change context
+14. keep visible roles simple as `user`, `manager`, and `admin`, adding product-specific capability flags only when needed
+15. keep the current workspace-email sign-in for active users plus invite-based magic-link activation for pending invites as the bridge until shared Altira auth exists, then layer Google / SSO onto the same model
+16. preserve the new buyer-facing readiness-OS IA rather than drifting back toward implementation-shaped navigation
+17. keep deployed preview access on explicit origins only, with debug auth shortcuts disabled unless a local-only flag is intentionally turned on
+18. keep the current Pages + Workers staged-preview pair stable while product-depth work continues, and bind `resilience.altiratech.com` only after the preview checklist is honestly complete
 
 ## Canonical Inputs
 

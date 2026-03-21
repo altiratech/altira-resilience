@@ -238,10 +238,10 @@ Use the staged preview screenshots as the build order, with completed work marke
 - done: strengthen launch/runtime depth so exercises, participant runs, tabletop control, and evidence now feel much more like one operational loop rather than adjacent panels
 - done: tighten `People` so directory, workspace access, and manager/participant operations now feel much more integrated with live readiness work
 - done: tighten identity integrity so duplicate emails, stale invite reconciliation, and false `People` coverage gaps are materially less likely in preview use
-- next: make an explicit call on tenanting before widening preview usage
-  - either keep Resilience intentionally single-workspace for the curated preview period
-  - or start introducing real workspace scoping into persistence before broader suite-style access
-- after that: decide whether `Settings` should become a richer control surface or remain intentionally slim
+- done: make the tenanting call for the current preview period
+  - keep Resilience intentionally single-workspace for the curated private preview
+  - defer real workspace scoping until after this preview period or before broader customer rollout
+- next: decide whether `Settings` should become a richer control surface or remain intentionally slim
 - then: keep the staged preview workspace coherent as deeper runtime and evidence stories continue to evolve
 - keep the current workspace-user/invite model as the bridge until shared Altira auth exists
 - keep provider-backed invite delivery and explicit preview-origin discipline in place, but treat them as preview hardening rather than the main product story

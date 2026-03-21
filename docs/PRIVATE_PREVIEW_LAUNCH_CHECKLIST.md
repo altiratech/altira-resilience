@@ -31,6 +31,7 @@ Already in place locally:
 - sign-in is now labeled `Private Preview`
 - debug auth shortcuts are now gated behind an explicit local-only flag instead of turning on for every non-production stage
 - the demo workspace has been cleaned so participant counts, invite records, and document-review states tell a more coherent firm story
+- the current private preview is now intentionally single-workspace, with broader workspace scoping deferred until after this curated preview period
 - provider-backed invite delivery now exists through Resend, with manual-copy fallback preserved when delivery is unavailable or not configured
 - a real Cloudflare-managed preview pair is now staged and validated:
   - web: `https://altira-resilience-web.pages.dev`
@@ -41,7 +42,6 @@ Already in place locally:
 Still open before deployment:
 - real preview email sender configuration (`RESEND_API_KEY`, sender identity, and deployed `APP_BASE_URL`)
 - bind and validate the public custom domain `resilience.altiratech.com`
-- stronger tenant isolation than the current single curated preview workspace
 
 ## Must Be True
 
@@ -74,6 +74,7 @@ Still open before deployment:
 
 - Production and preview secrets are stored correctly and are not hardcoded.
 - Demo/test data is intentionally separated from any real customer workspace data.
+- For this curated private preview, all invited testers stay inside one intentionally shared preview workspace; do not create separate customer workspaces on the current model.
 - Uploads, evidence, and access events remain auditable.
 - No known path allows one user to see another workspace's restricted data.
 - No known path allows a manager to act outside assigned scope.

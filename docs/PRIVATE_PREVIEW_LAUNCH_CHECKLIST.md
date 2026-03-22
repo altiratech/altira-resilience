@@ -32,6 +32,10 @@ Already in place locally:
 - debug auth shortcuts are now gated behind an explicit local-only flag instead of turning on for every non-production stage
 - the demo workspace has been cleaned so participant counts, invite records, and document-review states tell a more coherent firm story
 - the current private preview is now intentionally single-workspace, with broader workspace scoping deferred until after this curated preview period
+- preview support now has a named owner and a concrete intake path:
+  - owner: `Ryan Jameson`
+  - inbox: `contact@altiratech.com`
+  - intake guide: `docs/PRIVATE_PREVIEW_SUPPORT_PLAYBOOK.md`
 - provider-backed invite delivery now exists through Resend, with manual-copy fallback preserved when delivery is unavailable or not configured
 - a real Cloudflare-managed preview pair is now staged and validated:
   - web: `https://altira-resilience-web.pages.dev`

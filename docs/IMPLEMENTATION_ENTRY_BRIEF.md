@@ -121,6 +121,10 @@ The current implemented foundation is:
 73. `Settings` now acts as a bounded preview-control surface instead of a generic admin dump:
    - preview posture, rollout guardrails, and control-surface boundaries live there
    - day-to-day access, materials, launch, and evidence operations stay in their primary workflow tabs
+74. preview support readiness now has a concrete operator path:
+   - owner: `Ryan Jameson`
+   - inbox: `contact@altiratech.com`
+   - intake/triage guide: `docs/PRIVATE_PREVIEW_SUPPORT_PLAYBOOK.md`
 
 Runtime split now fixed:
 - individual exercise runs remain participant-owned and deterministically scored
@@ -150,6 +154,9 @@ Prioritized next build order:
    - keep day-to-day operator work in the other tabs
 2. keep preview workspace coherence across `Overview`, `Exercises`, `Evidence`, and `People`
    - maintain one active exercise, one upcoming launch, and one completed/closed package so the product keeps reading like a live program instead of an empty console
+3. keep preview support intentionally lightweight:
+   - use the named owner + email inbox + simple intake checklist now
+   - defer richer ticketing or support workflow until real preview volume proves the need
 
 ## Immediate Next Build Block
 

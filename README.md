@@ -116,6 +116,10 @@ Current state:
 - `Settings` now acts as a bounded preview-control surface instead of a generic admin catch-all:
   - preview posture, rollout guardrails, and control-surface boundaries live there
   - person-by-person access, materials review, exercise operations, and evidence closeout stay in their primary tabs
+- preview support readiness now has a concrete operator path:
+  - owner: `Ryan Jameson`
+  - inbox: `contact@altiratech.com`
+  - triage guide: `docs/PRIVATE_PREVIEW_SUPPORT_PLAYBOOK.md`
 - local preview bootstrap now filters validation and smoke-test source documents out of the admin preview payload so product review is not polluted by ingestion-test artifacts
 - the default admin landing view now leads with program signals instead of scaffold narration:
   - pending approvals
@@ -248,6 +252,9 @@ Use the staged preview screenshots as the build order, with completed work marke
   - it owns preview posture, rollout guardrails, and what belongs there versus elsewhere
   - it should not become a second admin console or a dumping ground for day-to-day operational work
 - next: keep the staged preview workspace coherent as deeper runtime and evidence stories continue to evolve
+- keep the preview support path intentionally lightweight for this cohort:
+  - email-based intake is enough for now
+  - do not build a separate ticketing workflow unless the cohort or issue volume forces it
 - keep the current workspace-user/invite model as the bridge until shared Altira auth exists
 - keep provider-backed invite delivery and explicit preview-origin discipline in place, but treat them as preview hardening rather than the main product story
 - keep visible suite roles simple: `user`, `manager`, `admin`

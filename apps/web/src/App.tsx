@@ -158,6 +158,9 @@ const fallbackTemplates: ScenarioTemplate[] = [
 const fallbackLaunches: LaunchSummary[] = [];
 const fallbackReports: ReportSummary[] = [];
 const fallbackDrafts: ScenarioDraft[] = [];
+const previewSupportOwnerName = 'Ryan Jameson';
+const previewSupportEmail = 'contact@altiratech.com';
+const previewSupportChecklist = 'Include the launch name, page, and whether the issue blocks sign-in, assignment, or evidence review.';
 const fallbackRosterMembers: RosterMember[] = [];
 const fallbackWorkspaceInvites: WorkspaceInvite[] = [];
 const fallbackAuditEvents: AuditEvent[] = [];
@@ -1854,6 +1857,7 @@ function SignInPanel({
         <h1>Private Preview</h1>
         <p>Rehearse the incidents your policies assume you can handle.</p>
         <p className="subtle">Invited workspace users can sign in to run exercises, review evidence, and manage the readiness program.</p>
+        <p className="table-note">Need access help or want to report an issue? Email {previewSupportEmail}.</p>
 
         {error ? <div className="notice notice-error">{error}</div> : null}
 
@@ -6136,7 +6140,8 @@ function SettingsPanel({
         <ul className="muted-list">
           <li>Private-preview posture: invite-only access, one curated workspace, and explicit go/no-go rules before a broader rollout.</li>
           <li>Program guardrails: admin review before launch, deterministic scoring, auditable exports, and no model training on customer materials by default.</li>
-          <li>Rollout blockers: preview sender configuration, custom-domain readiness, and support expectations before more testers are invited.</li>
+          <li>Rollout blockers: preview sender configuration, custom-domain readiness, and a concrete support path before more testers are invited.</li>
+          <li>Support posture: one named owner, one email intake path, and one lightweight issue template for the current curated cohort.</li>
           <li>Control-surface boundaries: what stays here versus what must remain in People, Materials, Exercises, and Evidence.</li>
         </ul>
       </div>
@@ -6167,7 +6172,11 @@ function SettingsPanel({
           </div>
           <div className="key-value-row">
             <span>Support expectation</span>
-            <strong>Define one named owner for tester triage before widening access</strong>
+            <strong>{previewSupportOwnerName} via {previewSupportEmail}</strong>
+          </div>
+          <div className="key-value-row">
+            <span>Feedback intake</span>
+            <strong>{previewSupportChecklist}</strong>
           </div>
         </div>
       </div>

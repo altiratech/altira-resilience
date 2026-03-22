@@ -113,6 +113,9 @@ Current state:
   - `Exercises` sub-navigation now reads as `Program`, `Scenario Studio`, `Launches`
   - settings and materials surfaces no longer expose platform-stack details or raw object-storage jargon to first-time operators
   - participant home copy is now more action-oriented and less internally framed
+- `Settings` now acts as a bounded preview-control surface instead of a generic admin catch-all:
+  - preview posture, rollout guardrails, and control-surface boundaries live there
+  - person-by-person access, materials review, exercise operations, and evidence closeout stay in their primary tabs
 - local preview bootstrap now filters validation and smoke-test source documents out of the admin preview payload so product review is not polluted by ingestion-test artifacts
 - the default admin landing view now leads with program signals instead of scaffold narration:
   - pending approvals
@@ -241,8 +244,10 @@ Use the staged preview screenshots as the build order, with completed work marke
 - done: make the tenanting call for the current preview period
   - keep Resilience intentionally single-workspace for the curated private preview
   - defer real workspace scoping until after this preview period or before broader customer rollout
-- next: decide whether `Settings` should become a richer control surface or remain intentionally slim
-- then: keep the staged preview workspace coherent as deeper runtime and evidence stories continue to evolve
+- done: decide `Settings` should deepen into a bounded preview-control surface
+  - it owns preview posture, rollout guardrails, and what belongs there versus elsewhere
+  - it should not become a second admin console or a dumping ground for day-to-day operational work
+- next: keep the staged preview workspace coherent as deeper runtime and evidence stories continue to evolve
 - keep the current workspace-user/invite model as the bridge until shared Altira auth exists
 - keep provider-backed invite delivery and explicit preview-origin discipline in place, but treat them as preview hardening rather than the main product story
 - keep visible suite roles simple: `user`, `manager`, `admin`

@@ -1730,7 +1730,14 @@ function App() {
           />
         ) : null}
 
-        {!participantWorkspace && !participantView && !facilitatorView && activeNav === 'settings' ? <SettingsPanel /> : null}
+        {!participantWorkspace && !participantView && !facilitatorView && activeNav === 'settings' ? (
+          <SettingsPanel
+            availableUsers={availableUsers}
+            workspaceInvites={workspaceInvites}
+            launches={launches}
+            reports={reports}
+          />
+        ) : null}
       </main>
     </div>
   );
@@ -6059,43 +6066,119 @@ function ParticipantExercisePanel({
   );
 }
 
-function SettingsPanel() {
+function SettingsPanel({
+  availableUsers,
+  workspaceInvites,
+  launches,
+  reports,
+}: {
+  availableUsers: WorkspaceUser[];
+  workspaceInvites: WorkspaceInvite[];
+  launches: LaunchSummary[];
+  reports: ReportSummary[];
+}) {
+  const activeUsers = availableUsers.filter((user) => user.status === 'active').length;
+  const scopedManagers = availableUsers.filter((user) => user.status === 'active' && user.role === 'manager').length;
+  const pendingInvites = workspaceInvites.filter((invite) => invite.status === 'pending').length;
+  const activeLaunches = launches.filter((launch) => launch.status === 'scheduled' || launch.status === 'in_progress').length;
+  const readyEvidence = reports.filter((report) => report.status === 'ready').length;
+  const closedEvidence = reports.filter((report) => report.status === 'closed').length;
+  const settingsCards: AdminSummaryCard[] = [
+    {
+      id: 'settings-preview',
+      label: 'Preview stance',
+      value: 'Single workspace',
+      note: 'This private preview stays inside one curated workspace until broader rollout justifies real workspace scoping.',
+      tone: 'ready',
+    },
+    {
+      id: 'settings-access',
+      label: 'Access posture',
+      value: `${activeUsers} active · ${pendingInvites} pending`,
+      note: 'Invite-only access remains the rule; People still owns person-by-person access changes and manager scope.',
+      tone: pendingInvites > 0 ? 'attention' : 'neutral',
+    },
+    {
+      id: 'settings-launches',
+      label: 'Live program work',
+      value: `${activeLaunches} live launch${activeLaunches === 1 ? '' : 'es'}`,
+      note: 'Exercises and Evidence still own the day-to-day operational loop; Settings only holds the low-frequency rules around it.',
+      tone: activeLaunches > 0 ? 'ready' : 'neutral',
+    },
+    {
+      id: 'settings-evidence',
+      label: 'Evidence posture',
+      value: `${readyEvidence} ready · ${closedEvidence} closed`,
+      note: 'Closeout remains an Evidence workflow, while Settings carries the governing posture for export and operator discipline.',
+      tone: readyEvidence > 0 ? 'attention' : closedEvidence > 0 ? 'ready' : 'neutral',
+    },
+  ];
+
   return (
     <section className="panel-grid">
       <div className="panel">
         <div className="panel-header">
           <div>
-            <h3>Program standards</h3>
-            <p>Keep approval, evidence, and customer-material handling explicit.</p>
+            <h3>Preview posture</h3>
+            <p>Settings now owns the low-frequency rules for the private preview, not the day-to-day operational work.</p>
+          </div>
+        </div>
+        <SummaryStrip cards={settingsCards} />
+      </div>
+
+      <div className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>What Settings owns</h3>
+            <p>Use this area for rollout posture, evidence rules, and preview guardrails that should change rarely.</p>
+          </div>
+        </div>
+        <ul className="muted-list">
+          <li>Private-preview posture: invite-only access, one curated workspace, and explicit go/no-go rules before a broader rollout.</li>
+          <li>Program guardrails: admin review before launch, deterministic scoring, auditable exports, and no model training on customer materials by default.</li>
+          <li>Rollout blockers: preview sender configuration, custom-domain readiness, and support expectations before more testers are invited.</li>
+          <li>Control-surface boundaries: what stays here versus what must remain in People, Materials, Exercises, and Evidence.</li>
+        </ul>
+      </div>
+
+      <div className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>Current launch gate</h3>
+            <p>The current private-preview path is about staying honest and controlled, not adding more knobs.</p>
           </div>
         </div>
         <div className="key-value-list">
           <div className="key-value-row">
-            <span>Customer data posture</span>
-            <strong>No model training on customer materials by default</strong>
+            <span>Workspace model</span>
+            <strong>One curated preview workspace</strong>
           </div>
           <div className="key-value-row">
-            <span>Approval gate</span>
-            <strong>Admin review before launch</strong>
+            <span>Access path</span>
+            <strong>Invite-only with {scopedManagers} scoped manager{scopedManagers === 1 ? '' : 's'}</strong>
           </div>
           <div className="key-value-row">
-            <span>Exercise scoring</span>
-            <strong>Deterministic template logic</strong>
+            <span>Sender posture</span>
+            <strong>Provider email exists; deployed sender config still gates broader preview</strong>
           </div>
           <div className="key-value-row">
-            <span>Auditability</span>
-            <strong>Launch, response, and export events must be traceable</strong>
+            <span>Custom domain</span>
+            <strong>Wait until the private-preview checklist is honestly complete</strong>
+          </div>
+          <div className="key-value-row">
+            <span>Support expectation</span>
+            <strong>Define one named owner for tester triage before widening access</strong>
           </div>
         </div>
       </div>
 
       <div className="panel side-panel">
-        <h3>Admin controls</h3>
+        <h3>What stays elsewhere</h3>
         <ul className="muted-list">
-          <li>Review materials before they shape live exercises.</li>
-          <li>Control who can access the workspace and which teams managers can oversee.</li>
-          <li>Approve launches and close evidence packages when review is complete.</li>
-          <li>Keep access changes, launch changes, and exports traceable for audit.</li>
+          <li>`People` owns access changes, pending invites, roster coverage, and manager scope follow-through.</li>
+          <li>`Materials` owns source review, extraction approval, and confirmed internal context.</li>
+          <li>`Exercises` owns draft authoring, launch creation, assignment, and tabletop control.</li>
+          <li>`Evidence` owns review, closeout notes, exports, and follow-up actions.</li>
         </ul>
       </div>
     </section>

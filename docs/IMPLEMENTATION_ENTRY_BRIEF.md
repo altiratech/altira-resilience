@@ -118,6 +118,9 @@ The current implemented foundation is:
 70. roster, workspace-user, and pending-invite email identity now normalize consistently during create/update flows instead of depending on caller casing
 71. accepting a pending invite now reconciles an existing active workspace user to the staged role, scope, capability, and roster link instead of silently keeping stale access
 72. `People` no longer treats active email-matched workspace access as a false coverage gap; those records now show up as explicit link follow-up instead
+73. `Settings` now acts as a bounded preview-control surface instead of a generic admin dump:
+   - preview posture, rollout guardrails, and control-surface boundaries live there
+   - day-to-day access, materials, launch, and evidence operations stay in their primary workflow tabs
 
 Runtime split now fixed:
 - individual exercise runs remain participant-owned and deterministically scored
@@ -137,14 +140,14 @@ What the screenshots showed:
 - the shell and navigation are now strong enough to carry the product
 - `Overview` and `Materials` feel substantially more real than the other surfaces
 - `Exercises` has the right shape, but still needs deeper working content
-- `Evidence` and `Settings` currently feel too empty to prove the product
+- `Evidence` was too empty before the deeper review pass, and `Settings` needed a clearer owner/job instead of filler
 - the next wins should come from making the default workspace tell a believable readiness-program story, not from another shell redesign
 
 Prioritized next build order:
 
-1. decide the long-term role of `Settings`
-   - either deepen `Settings` into a real control surface or keep it intentionally slim
-   - avoid adding filler there just to make the page feel busier
+1. keep `Settings` bounded as a preview-control surface:
+   - let it own rollout posture, guardrails, and control-surface boundaries
+   - keep day-to-day operator work in the other tabs
 2. keep preview workspace coherence across `Overview`, `Exercises`, `Evidence`, and `People`
    - maintain one active exercise, one upcoming launch, and one completed/closed package so the product keeps reading like a live program instead of an empty console
 
@@ -169,7 +172,7 @@ Prioritized next build order:
 6. keep the current preview intentionally single-workspace for this curated period:
    - do not create separate customer workspaces on the current preview data model
    - revisit true workspace scoping only after this preview period or before broader rollout
-7. decide whether `Settings` should deepen into a real control surface or remain intentionally slim, and avoid adding filler there in the meantime
+7. keep `Settings` bounded to preview posture, rollout rules, and control-surface boundaries instead of letting it absorb daily operational tasks
 8. keep the current workspace-user admin, invite flow, and manager team-scope model as the bridge layer until shared Altira auth exists
 9. keep provider-backed invite delivery on top of the existing magic-link bridge, but treat preview sender config as deployment work rather than the main product task
 10. keep the new audit trail lightweight and operator-readable rather than widening it into a full approval engine too early

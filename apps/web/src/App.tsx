@@ -161,6 +161,8 @@ const fallbackDrafts: ScenarioDraft[] = [];
 const previewSupportOwnerName = 'Ryan Jameson';
 const previewSupportEmail = 'contact@altiratech.com';
 const previewSupportChecklist = 'Include the launch name, page, and whether the issue blocks sign-in, assignment, or evidence review.';
+const previewRequestAccessUrl = 'https://altiratech.com/products/resilience/#request-access';
+const previewRequestAccessFlow = 'Public request access now routes through the Altira site, then approved requests move into People as preview invites.';
 const fallbackRosterMembers: RosterMember[] = [];
 const fallbackWorkspaceInvites: WorkspaceInvite[] = [];
 const fallbackAuditEvents: AuditEvent[] = [];
@@ -6141,6 +6143,7 @@ function SettingsPanel({
           <li>Private-preview posture: invite-only access, one curated workspace, and explicit go/no-go rules before a broader rollout.</li>
           <li>Program guardrails: admin review before launch, deterministic scoring, auditable exports, and no model training on customer materials by default.</li>
           <li>Rollout blockers: preview sender configuration, custom-domain readiness, and a concrete support path before more testers are invited.</li>
+          <li>Public intake path: request access happens on the public site, while approved leads become manual preview invites inside People.</li>
           <li>Support posture: one named owner, one email intake path, and one lightweight issue template for the current curated cohort.</li>
           <li>Control-surface boundaries: what stays here versus what must remain in People, Materials, Exercises, and Evidence.</li>
         </ul>
@@ -6177,6 +6180,14 @@ function SettingsPanel({
           <div className="key-value-row">
             <span>Feedback intake</span>
             <strong>{previewSupportChecklist}</strong>
+          </div>
+          <div className="key-value-row">
+            <span>Request access path</span>
+            <strong>{previewRequestAccessFlow}</strong>
+          </div>
+          <div className="key-value-row">
+            <span>Public intake URL</span>
+            <strong>{previewRequestAccessUrl}</strong>
           </div>
         </div>
       </div>

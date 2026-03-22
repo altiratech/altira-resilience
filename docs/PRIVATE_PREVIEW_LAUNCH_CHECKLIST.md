@@ -36,6 +36,9 @@ Already in place locally:
   - owner: `Ryan Jameson`
   - inbox: `contact@altiratech.com`
   - intake guide: `docs/PRIVATE_PREVIEW_SUPPORT_PLAYBOOK.md`
+- public `Request access` now routes through the company-site Resilience page and preserves structured preview-intake fields before any invite is issued:
+  - public intake URL: `https://altiratech.com/products/resilience/#request-access`
+  - operator handoff: `docs/PRIVATE_PREVIEW_REQUEST_ACCESS_HANDOFF.md`
 - provider-backed invite delivery now exists through Resend, with manual-copy fallback preserved when delivery is unavailable or not configured
 - a real Cloudflare-managed preview pair is now staged and validated:
   - web: `https://altira-resilience-web.pages.dev`
@@ -109,6 +112,7 @@ Still open before deployment:
   - free-text problem statement
   - source / referrer when available
 - There is a simple way to map approved leads into preview invites without re-entering everything manually.
+  - the current bridge is the structured request email plus `docs/PRIVATE_PREVIEW_REQUEST_ACCESS_HANDOFF.md`
 
 ### 6. Preview Rollout Discipline
 
@@ -126,6 +130,7 @@ Still open before deployment:
 
 - Provider-backed invite email delivery fully configured in the deployed preview environment instead of relying on manual fallback.
 - A preview feedback form or lightweight issue intake flow.
+- A CRM or richer lead-ops path only if the manual request-access handoff starts creating real operational drag.
 - A clean analytics trail for:
   - request access
   - sign in

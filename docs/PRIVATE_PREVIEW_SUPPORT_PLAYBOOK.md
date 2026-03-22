@@ -15,6 +15,8 @@ Ask testers to send preview issues by email to `contact@altiratech.com`.
 
 For the current curated preview, this email path is the support lane. Do not build a separate in-app ticketing flow yet.
 
+Public request-access submissions should not use the tester issue path. Those now come through `https://altiratech.com/products/resilience/#request-access` and move through `docs/PRIVATE_PREVIEW_REQUEST_ACCESS_HANDOFF.md`.
+
 ## Ask Testers To Include
 
 - their workspace email

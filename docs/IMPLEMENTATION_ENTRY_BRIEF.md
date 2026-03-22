@@ -125,6 +125,10 @@ The current implemented foundation is:
    - owner: `Ryan Jameson`
    - inbox: `contact@altiratech.com`
    - intake/triage guide: `docs/PRIVATE_PREVIEW_SUPPORT_PLAYBOOK.md`
+75. public request access now has a concrete intake-to-invite bridge:
+   - public intake lives at `https://altiratech.com/products/resilience/#request-access`
+   - approved requests map into `People` invites through `docs/PRIVATE_PREVIEW_REQUEST_ACCESS_HANDOFF.md`
+   - the richer buyer/request context stays in the structured intake email instead of being re-entered into the invite form
 
 Runtime split now fixed:
 - individual exercise runs remain participant-owned and deterministically scored
@@ -156,6 +160,7 @@ Prioritized next build order:
    - maintain one active exercise, one upcoming launch, and one completed/closed package so the product keeps reading like a live program instead of an empty console
 3. keep preview support intentionally lightweight:
    - use the named owner + email inbox + simple intake checklist now
+   - keep public request access separate from sign-in, and let approved requests flow into `People` invites through the documented operator handoff
    - defer richer ticketing or support workflow until real preview volume proves the need
 
 ## Immediate Next Build Block
@@ -191,6 +196,7 @@ Prioritized next build order:
 16. preserve the new buyer-facing readiness-OS IA rather than drifting back toward implementation-shaped navigation
 17. keep deployed preview access on explicit origins only, with debug auth shortcuts disabled unless a local-only flag is intentionally turned on
 18. keep the current Pages + Workers staged-preview pair stable while product-depth work continues, and bind `resilience.altiratech.com` only after the preview checklist is honestly complete
+19. keep public request-access intake on the company site and treat the structured intake email as the source record until a richer CRM or invite-ops layer is justified
 
 ## Canonical Inputs
 

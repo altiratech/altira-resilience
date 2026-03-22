@@ -120,6 +120,10 @@ Current state:
   - owner: `Ryan Jameson`
   - inbox: `contact@altiratech.com`
   - triage guide: `docs/PRIVATE_PREVIEW_SUPPORT_PLAYBOOK.md`
+- public request access now has a concrete operator handoff path:
+  - public intake URL: `https://altiratech.com/products/resilience/#request-access`
+  - approved requests map into preview invites through `People`
+  - handoff guide: `docs/PRIVATE_PREVIEW_REQUEST_ACCESS_HANDOFF.md`
 - local preview bootstrap now filters validation and smoke-test source documents out of the admin preview payload so product review is not polluted by ingestion-test artifacts
 - the default admin landing view now leads with program signals instead of scaffold narration:
   - pending approvals
@@ -251,7 +255,11 @@ Use the staged preview screenshots as the build order, with completed work marke
 - done: decide `Settings` should deepen into a bounded preview-control surface
   - it owns preview posture, rollout guardrails, and what belongs there versus elsewhere
   - it should not become a second admin console or a dumping ground for day-to-day operational work
-- next: keep the staged preview workspace coherent as deeper runtime and evidence stories continue to evolve
+- done: define the public `Request access` to preview-invite handoff
+  - public intake now lives on the Resilience product page
+  - approved requests now have a documented bridge into `People` invites without re-entering the full intake
+- next: finish deployed preview sender config and custom-domain readiness so the now-defined request-access and invite path can run on the intended public/private-preview URLs
+- keep the staged preview workspace coherent as deeper runtime and evidence stories continue to evolve
 - keep the preview support path intentionally lightweight for this cohort:
   - email-based intake is enough for now
   - do not build a separate ticketing workflow unless the cohort or issue volume forces it

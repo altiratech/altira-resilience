@@ -168,6 +168,37 @@ Before that public-facing preview bind happens, the safe staging posture is:
 3. manual-copy invite fallback still acceptable while sender config is pending
 4. no custom-domain binding until the staged preview remains stable
 
+## One-Pass Cutover Helper
+
+Once the preview is honestly ready to open on the branded URL, use the helper at `scripts/finish_preview_cutover.sh` from the Resilience repo root.
+
+Required environment values:
+
+- `CLOUDFLARE_API_TOKEN`
+- `RESEND_API_KEY`
+- optional override: `INVITE_EMAIL_FROM` (default: `Altira <contact@altiratech.com>`)
+- optional override: `INVITE_EMAIL_REPLY_TO` (default: `contact@altiratech.com`)
+
+Example:
+
+```bash
+cd Code/active/altira-resilience
+CLOUDFLARE_API_TOKEN=... \
+RESEND_API_KEY=... \
+INVITE_EMAIL_FROM='Altira <contact@altiratech.com>' \
+INVITE_EMAIL_REPLY_TO='contact@altiratech.com' \
+./scripts/finish_preview_cutover.sh
+```
+
+What the helper does:
+
+1. ensures the Pages custom-domain object exists for `resilience.altiratech.com`
+2. creates or updates the DNS CNAME to `altira-resilience-web.pages.dev`
+3. waits for the branded domain to go active on Cloudflare Pages
+4. sets the preview invite sender bindings and deploys the preview API with `APP_BASE_URL=https://resilience.altiratech.com`
+5. deploys `Code/active/altiratech-site` so the public Resilience page shows `Request Access` and sends `Sign In` to the branded URL
+6. runs a final live verification pass against the API, branded app URL, and public product page
+
 ## Decision Trigger
 
 Revisit deployment only when this checklist can be reviewed item by item and honestly marked complete.

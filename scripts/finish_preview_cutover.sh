@@ -7,6 +7,7 @@ LIFEHUB_ROOT="${LIFEHUB_ROOT:-$(cd "${APP_ROOT}/../../.." && pwd)}"
 SITE_ROOT="${SITE_ROOT:-${LIFEHUB_ROOT}/Code/active/altiratech-site}"
 APP_API_ROOT="${APP_ROOT}/apps/api"
 WRANGLER_BIN="${WRANGLER_BIN:-${APP_ROOT}/node_modules/.bin/wrangler}"
+SITE_PRODUCT_FILE="${SITE_ROOT}/public/products/resilience/index.html"
 
 CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-73e262c2b93b216f461c51bd1945fee4}"
 CLOUDFLARE_ZONE_ID="${CLOUDFLARE_ZONE_ID:-285d9491aa8c6d686cccd189513b0d43}"
@@ -174,6 +175,12 @@ deploy_preview_api() {
 deploy_public_site() {
   log "Deploy Public Site"
 
+  if [[ ! -f "$SITE_PRODUCT_FILE" ]]; then
+    printf 'Site product page not found at %s\n' "$SITE_PRODUCT_FILE" >&2
+    exit 1
+  fi
+
+  perl -0pi -e 's#https://altira-resilience-web\.pages\.dev/#https://resilience.altiratech.com/#g' "$SITE_PRODUCT_FILE"
   "$WRANGLER_BIN" --cwd "$SITE_ROOT" deploy --message "Publish Resilience request access cutover"
 }
 

@@ -196,7 +196,7 @@ What the helper does:
 2. creates or updates the DNS CNAME to `altira-resilience-web.pages.dev`
 3. waits for the branded domain to go active on Cloudflare Pages
 4. sets the preview invite sender bindings and deploys the preview API with `APP_BASE_URL=https://resilience.altiratech.com`
-5. deploys `Code/active/altiratech-site` so the public Resilience page shows `Request Access` and sends `Sign In` to the branded URL
+5. flips the public Resilience `Sign In` CTA from the temporary Pages URL to the branded URL, then deploys `Code/active/altiratech-site`
 6. runs a final live verification pass against the API, branded app URL, and public product page
 
 ## Decision Trigger

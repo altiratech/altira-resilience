@@ -174,13 +174,26 @@ deploy_preview_api() {
 
 deploy_public_site() {
   log "Deploy Public Site"
+  local source_sign_in_url="https://altira-resilience-web.pages.dev/"
+  local branded_sign_in_url="https://resilience.altiratech.com/"
 
   if [[ ! -f "$SITE_PRODUCT_FILE" ]]; then
     printf 'Site product page not found at %s\n' "$SITE_PRODUCT_FILE" >&2
     exit 1
   fi
 
+  if ! rg -Fq "$source_sign_in_url" "$SITE_PRODUCT_FILE"; then
+    printf 'Expected source sign-in URL not found in %s: %s\n' "$SITE_PRODUCT_FILE" "$source_sign_in_url" >&2
+    exit 1
+  fi
+
   perl -0pi -e 's#https://altira-resilience-web\.pages\.dev/#https://resilience.altiratech.com/#g' "$SITE_PRODUCT_FILE"
+
+  if ! rg -Fq "$branded_sign_in_url" "$SITE_PRODUCT_FILE"; then
+    printf 'Branded sign-in URL not written to %s: %s\n' "$SITE_PRODUCT_FILE" "$branded_sign_in_url" >&2
+    exit 1
+  fi
+
   "$WRANGLER_BIN" --cwd "$SITE_ROOT" deploy --message "Publish Resilience request access cutover"
 }
 

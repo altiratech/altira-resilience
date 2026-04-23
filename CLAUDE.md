@@ -1,8 +1,9 @@
-# Claude Rules — Altira Resilience
+# Altira Resilience Claude Review Rules
 
-This repo uses the workspace multi-LLM protocol defined in `SYSTEM/SESSION_PROTOCOL.md` at the Lifehub workspace root.
+Read `CURRENT_STATUS.md`, `README.md`, and only the specific launch docs or files in scope.
 
-Mandatory:
-- Read/update shared context docs (`DECISIONS.md`, `HANDOFF.md`, `KNOWN_CONTEXT.md`) every session.
-- All decisions logged with next D-number in sequence.
-- Keep Altira Resilience separate from Altira Flashpoint in product framing and build decisions.
+Do not load workspace history by default.
+
+Review focus:
+- Keep Resilience distinct from Flashpoint.
+- Prioritize launch-risk review, cutover sequencing, and product-copy clarity over new process machinery.

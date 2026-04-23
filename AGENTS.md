@@ -1,8 +1,11 @@
-# Agent Rules — Altira Resilience
+# Altira Resilience Agent Rules
 
-This repo uses the workspace multi-LLM protocol defined in `SYSTEM/SESSION_PROTOCOL.md` at the Lifehub workspace root.
+Read first:
+- `CURRENT_STATUS.md`
+- `README.md`
+- `docs/PRIVATE_PREVIEW_LAUNCH_CHECKLIST.md`
 
-Mandatory:
-- Read/update shared context docs (`DECISIONS.md`, `HANDOFF.md`, `KNOWN_CONTEXT.md`) every session.
-- All decisions logged with next D-number in sequence.
-- Keep Altira Resilience separate from Altira Flashpoint in product framing and build decisions.
+Rules:
+- Keep Resilience separate from Flashpoint in product framing and build decisions.
+- Keep public-site work separate from private-preview product work.
+- Use repo docs and scripts for cutover work before inventing new process.

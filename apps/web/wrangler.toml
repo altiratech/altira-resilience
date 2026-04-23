@@ -1,0 +1,6 @@
+name = "altira-resilience-web"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-03-19"
+
+[vars]
+API_ORIGIN = "https://altira-resilience-api-preview.rjameson.workers.dev"

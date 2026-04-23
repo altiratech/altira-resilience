@@ -118,6 +118,21 @@ textarea {
   padding: 24px 18px;
 }
 
+.brand-mark {
+  display: block;
+  width: 146px;
+  max-width: 100%;
+  height: auto;
+}
+
+.brand-mark-light {
+  margin-bottom: 12px;
+}
+
+.brand-mark-dark {
+  margin-bottom: 14px;
+}
+
 .brand h1 {
   margin: 0 0 8px;
   font-size: 2rem;

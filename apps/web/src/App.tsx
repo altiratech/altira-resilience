@@ -1388,7 +1388,7 @@ function App() {
     return (
       <div className="auth-shell">
         <div className="auth-panel">
-          <div className="eyebrow">Altira</div>
+          <img className="brand-mark brand-mark-light" src="/brand/altira-wordmark-light.png" alt="Altira" />
           <h1>Resilience</h1>
           <p>Loading workspace session and readiness console.</p>
         </div>
@@ -1414,7 +1414,7 @@ function App() {
     return (
       <div className="auth-shell">
         <section className="auth-panel auth-panel-primary">
-          <div className="eyebrow">Altira</div>
+          <img className="brand-mark brand-mark-light" src="/brand/altira-wordmark-light.png" alt="Altira" />
           <h1>Resilience</h1>
           <p>We found your session, but the workspace console did not finish loading.</p>
           {error ? <div className="notice notice-error">{error}</div> : null}
@@ -1436,7 +1436,7 @@ function App() {
       {!participantWorkspace ? (
         <aside className="sidebar">
           <div className="brand">
-            <div className="eyebrow">Altira</div>
+            <img className="brand-mark brand-mark-dark" src="/brand/altira-wordmark-dark.png" alt="Altira" />
             <h1>Resilience</h1>
             <p>Operational console for readiness programs, exercises, and evidence.</p>
           </div>
@@ -1855,7 +1855,7 @@ function SignInPanel({
   return (
     <div className="auth-shell">
       <section className="auth-panel auth-panel-primary">
-        <div className="eyebrow">Altira Resilience</div>
+        <img className="brand-mark brand-mark-light" src="/brand/altira-wordmark-light.png" alt="Altira" />
         <h1>Private Preview</h1>
         <p>Rehearse the incidents your policies assume you can handle.</p>
         <p className="subtle">Invited workspace users can sign in to run exercises, review evidence, and manage the readiness program.</p>

@@ -83,7 +83,7 @@ describe('Altira Resilience API', () => {
   it('uses cross-site-safe session cookies for preview sign-in', async () => {
     const app = createApp(new MemoryResilienceStore());
 
-    const signInResponse = await app.request('https://resilience.altiratech.com/api/v1/auth/sign-in', {
+    const signInResponse = await app.request('https://resilience.ryanjameson.me/api/v1/auth/sign-in', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: 'dana.smith@altira-demo.local' }),
@@ -106,7 +106,7 @@ describe('Altira Resilience API', () => {
       },
     }, {
       APP_STAGE: 'preview',
-      APP_ALLOWED_ORIGINS: 'https://altira-resilience-web.pages.dev,https://resilience.altiratech.com',
+      APP_ALLOWED_ORIGINS: 'https://altira-resilience-web.pages.dev,https://resilience.ryanjameson.me',
     } as never);
 
     expect(response.status).toBe(204);
@@ -237,7 +237,7 @@ describe('Altira Resilience API', () => {
     const token = 'casey-invite-token';
     await store.issueWorkspaceInviteMagicLink(invite.id, {
       tokenHash: await hashTokenForTest(token),
-      expiresAt: '2026-03-25T10:00:00.000Z',
+      expiresAt: '2099-03-25T10:00:00.000Z',
     });
 
     const consumeResponse = await app.request('/api/v1/auth/magic-link/consume', {
@@ -342,7 +342,7 @@ describe('Altira Resilience API', () => {
         INVITE_EMAIL_PROVIDER: 'resend',
         RESEND_API_KEY: 're_test',
         INVITE_EMAIL_FROM: 'Altira <preview@altira-demo.local>',
-        APP_BASE_URL: 'https://resilience-preview.altiratech.com',
+        APP_BASE_URL: 'https://resilience.ryanjameson.me',
       }));
       const sendLinkPayload = (await sendLinkResponse.json()) as {
         workspaceInvite: WorkspaceInvite;
@@ -380,8 +380,8 @@ describe('Altira Resilience API', () => {
       expect(body.from).toBe('Altira <preview@altira-demo.local>');
       expect(body.to).toEqual(['preview.user@altira-demo.local']);
       expect(body.subject).toContain('Altira Resilience');
-      expect(body.html).toContain('https://resilience-preview.altiratech.com/?magic_link_token=');
-      expect(body.text).toContain('https://resilience-preview.altiratech.com/?magic_link_token=');
+      expect(body.html).toContain('https://resilience.ryanjameson.me/?magic_link_token=');
+      expect(body.text).toContain('https://resilience.ryanjameson.me/?magic_link_token=');
     } finally {
       vi.unstubAllGlobals();
     }

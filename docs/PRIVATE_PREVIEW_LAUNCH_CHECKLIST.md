@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Use this checklist before launching `resilience.altiratech.com` as a real Altira app URL.
+Use this checklist before launching `resilience.ryanjameson.me` as a real Altira app URL.
 
 The goal is not a public launch. The goal is a controlled `Private Preview` that:
 - gives us a real URL for browser-based testing
@@ -12,7 +12,7 @@ The goal is not a public launch. The goal is a controlled `Private Preview` that
 ## Target State
 
 Desired posture for the first URL-based launch:
-- domain: `resilience.altiratech.com`
+- domain: `resilience.ryanjameson.me`
 - product label: `Private Preview`
 - access model: invite-only or explicitly approved users
 - audience: internal team plus a small number of trusted testers
@@ -47,8 +47,8 @@ Already in place locally:
   - real browser sign-in and sign-out have been verified against the staged preview
 
 Still open before deployment:
-- real preview email sender configuration (`RESEND_API_KEY`, sender identity, and deployed `APP_BASE_URL`)
-- bind and validate the public custom domain `resilience.altiratech.com`
+- real preview email sender configuration (`RESEND_API_KEY`, sender identity, and deployed `APP_BASE_URL`) if provider-backed invites are enabled
+- bind and validate the public custom domain `resilience.ryanjameson.me`
 
 ## Must Be True
 
@@ -152,7 +152,7 @@ Still open before deployment:
 
 When we are ready, the first release should be:
 
-1. `resilience.altiratech.com`
+1. `resilience.ryanjameson.me`
 2. `Private Preview` label on sign-in
 3. invite-only access
 4. clean demo workspace
@@ -175,7 +175,7 @@ Once the preview is honestly ready to open on the branded URL, use the helper at
 Required environment values:
 
 - `CLOUDFLARE_API_TOKEN`
-- `RESEND_API_KEY`
+- `RESEND_API_KEY` only when `INVITE_EMAIL_PROVIDER=resend`
 - optional override: `INVITE_EMAIL_FROM` (default: `Altira <contact@altiratech.com>`)
 - optional override: `INVITE_EMAIL_REPLY_TO` (default: `contact@altiratech.com`)
 
@@ -192,10 +192,10 @@ INVITE_EMAIL_REPLY_TO='contact@altiratech.com' \
 
 What the helper does:
 
-1. ensures the Pages custom-domain object exists for `resilience.altiratech.com`
+1. ensures the Pages custom-domain object exists for `resilience.ryanjameson.me`
 2. creates or updates the DNS CNAME to `altira-resilience-web.pages.dev`
 3. waits for the branded domain to go active on Cloudflare Pages
-4. sets the preview invite sender bindings and deploys the preview API with `APP_BASE_URL=https://resilience.altiratech.com`
+4. sets the preview invite sender bindings when Resend is configured and deploys the preview API with `APP_BASE_URL=https://resilience.ryanjameson.me`
 5. flips the public Resilience `Sign In` CTA from the temporary Pages URL to the branded URL, then deploys `Code/active/altiratech-site`
 6. runs a final live verification pass against the API, branded app URL, and public product page
 

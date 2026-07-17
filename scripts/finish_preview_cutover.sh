@@ -10,11 +10,12 @@ WRANGLER_BIN="${WRANGLER_BIN:-${APP_ROOT}/node_modules/.bin/wrangler}"
 SITE_PRODUCT_FILE="${SITE_ROOT}/public/products/resilience/index.html"
 
 CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-73e262c2b93b216f461c51bd1945fee4}"
-CLOUDFLARE_ZONE_ID="${CLOUDFLARE_ZONE_ID:-285d9491aa8c6d686cccd189513b0d43}"
+CLOUDFLARE_ZONE_ID="${CLOUDFLARE_ZONE_ID:-}"
 PAGES_PROJECT="${PAGES_PROJECT:-altira-resilience-web}"
-RESILIENCE_DOMAIN="${RESILIENCE_DOMAIN:-resilience.altiratech.com}"
+RESILIENCE_DOMAIN="${RESILIENCE_DOMAIN:-resilience.ryanjameson.me}"
 PAGES_TARGET="${PAGES_TARGET:-altira-resilience-web.pages.dev}"
 APP_BASE_URL="${APP_BASE_URL:-https://${RESILIENCE_DOMAIN}}"
+INVITE_EMAIL_PROVIDER="${INVITE_EMAIL_PROVIDER:-manual_copy}"
 INVITE_EMAIL_FROM="${INVITE_EMAIL_FROM:-Altira <contact@altiratech.com>}"
 INVITE_EMAIL_REPLY_TO="${INVITE_EMAIL_REPLY_TO:-contact@altiratech.com}"
 
@@ -57,6 +58,26 @@ cf_api() {
     curl -sS -X "$method" \
       -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
       "$url"
+  fi
+}
+
+resolve_zone_id() {
+  if [[ -n "$CLOUDFLARE_ZONE_ID" ]]; then
+    return
+  fi
+
+  local zone_name="${RESILIENCE_DOMAIN#*.}"
+  local zones_response
+  zones_response="$(cf_api GET "https://api.cloudflare.com/client/v4/zones?name=${zone_name}&status=active")"
+  if ! jq -e '.success == true' >/dev/null <<<"$zones_response"; then
+    jq '{success, errors, messages}' <<<"$zones_response" >&2
+    exit 1
+  fi
+
+  CLOUDFLARE_ZONE_ID="$(jq -r '.result[0].id // empty' <<<"$zones_response")"
+  if [[ -z "$CLOUDFLARE_ZONE_ID" ]]; then
+    printf 'No active Cloudflare zone found for %s\n' "$zone_name" >&2
+    exit 1
   fi
 }
 
@@ -161,21 +182,25 @@ wait_for_pages_domain() {
 deploy_preview_api() {
   log "Deploy Preview API"
 
-  printf '%s' "$RESEND_API_KEY" | "$WRANGLER_BIN" --cwd "$APP_API_ROOT" secret put RESEND_API_KEY --env preview
-  printf '%s' "$INVITE_EMAIL_FROM" | "$WRANGLER_BIN" --cwd "$APP_API_ROOT" secret put INVITE_EMAIL_FROM --env preview
-  printf '%s' "$INVITE_EMAIL_REPLY_TO" | "$WRANGLER_BIN" --cwd "$APP_API_ROOT" secret put INVITE_EMAIL_REPLY_TO --env preview
+  if [[ "$INVITE_EMAIL_PROVIDER" == "resend" ]]; then
+    require_env RESEND_API_KEY
+    printf '%s' "$RESEND_API_KEY" | "$WRANGLER_BIN" --cwd "$APP_API_ROOT" secret put RESEND_API_KEY --env preview
+    printf '%s' "$INVITE_EMAIL_FROM" | "$WRANGLER_BIN" --cwd "$APP_API_ROOT" secret put INVITE_EMAIL_FROM --env preview
+    printf '%s' "$INVITE_EMAIL_REPLY_TO" | "$WRANGLER_BIN" --cwd "$APP_API_ROOT" secret put INVITE_EMAIL_REPLY_TO --env preview
+  fi
 
   "$WRANGLER_BIN" --cwd "$APP_API_ROOT" deploy \
     --env preview \
     --keep-vars \
     --var "APP_BASE_URL:${APP_BASE_URL}" \
+    --var "INVITE_EMAIL_PROVIDER:${INVITE_EMAIL_PROVIDER}" \
     --message "Finalize Resilience preview cutover"
 }
 
 deploy_public_site() {
   log "Deploy Public Site"
   local source_sign_in_url="https://altira-resilience-web.pages.dev/"
-  local branded_sign_in_url="https://resilience.altiratech.com/"
+  local branded_sign_in_url="https://resilience.ryanjameson.me/"
 
   if [[ ! -f "$SITE_PRODUCT_FILE" ]]; then
     printf 'Site product page not found at %s\n' "$SITE_PRODUCT_FILE" >&2
@@ -187,7 +212,7 @@ deploy_public_site() {
     exit 1
   fi
 
-  perl -0pi -e 's#https://altira-resilience-web\.pages\.dev/#https://resilience.altiratech.com/#g' "$SITE_PRODUCT_FILE"
+  perl -0pi -e 's#https://altira-resilience-web\.pages\.dev/#https://resilience.ryanjameson.me/#g' "$SITE_PRODUCT_FILE"
 
   if ! rg -Fq "$branded_sign_in_url" "$SITE_PRODUCT_FILE"; then
     printf 'Branded sign-in URL not written to %s: %s\n' "$SITE_PRODUCT_FILE" "$branded_sign_in_url" >&2
@@ -202,12 +227,12 @@ verify_live_state() {
 
   curl -fsS "https://altira-resilience-api-preview.rjameson.workers.dev/health" | jq .
   curl -fsSI "https://${RESILIENCE_DOMAIN}" | sed -n '1,5p'
-  curl -fsSL "https://altiratech.com/products/resilience/" | rg -n "Request Access|resilience.altiratech.com|Sign In"
+  curl -fsSL "https://altiratech.com/products/resilience/" | rg -n "Request Access|resilience.ryanjameson.me|Sign In"
 }
 
 main() {
   require_command curl jq rg sed sleep
-  require_env CLOUDFLARE_API_TOKEN RESEND_API_KEY
+  require_env CLOUDFLARE_API_TOKEN
 
   if [[ ! -x "$WRANGLER_BIN" ]]; then
     printf 'Wrangler binary not found at %s\n' "$WRANGLER_BIN" >&2
@@ -220,6 +245,7 @@ main() {
   fi
 
   ensure_pages_domain
+  resolve_zone_id
   upsert_dns_cname
   wait_for_pages_domain
   deploy_preview_api

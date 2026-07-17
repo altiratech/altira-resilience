@@ -20,9 +20,10 @@ The current implementation includes:
 - exportable evidence packages with deterministic after-action summaries and operator closeout notes
 
 Current deployment note:
-- The working staged preview is the Cloudflare Pages deployment.
-- The branded `resilience.altiratech.com` cutover is not complete yet.
-- Treat custom-domain activation, sender setup, and preview cutover as operational launch work rather than product redesign.
+- The private preview is live at `https://resilience.ryanjameson.me` on Cloudflare Pages.
+- The preview API runs at `https://altira-resilience-api-preview.rjameson.workers.dev`.
+- Invite delivery is currently `manual_copy`; enable Resend only after sender and secret verification.
+- Treat custom-domain, sender, and preview changes as operational launch work rather than product redesign.
 
 ## Product Boundary
 

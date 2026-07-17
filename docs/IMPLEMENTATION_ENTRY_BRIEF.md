@@ -195,7 +195,7 @@ Prioritized next build order:
 15. keep the current workspace-email sign-in for active users plus invite-based magic-link activation for pending invites as the bridge until shared Altira auth exists, then layer Google / SSO onto the same model
 16. preserve the new buyer-facing readiness-OS IA rather than drifting back toward implementation-shaped navigation
 17. keep deployed preview access on explicit origins only, with debug auth shortcuts disabled unless a local-only flag is intentionally turned on
-18. keep the current Pages + Workers staged-preview pair stable while product-depth work continues, and bind `resilience.altiratech.com` only after the preview checklist is honestly complete
+18. keep the current Pages + Workers staged-preview pair stable while product-depth work continues, and bind `resilience.ryanjameson.me` only after the preview checklist is honestly complete
 19. keep public request-access intake on the company site and treat the structured intake email as the source record until a richer CRM or invite-ops layer is justified
 
 ## Canonical Inputs

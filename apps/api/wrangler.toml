@@ -38,7 +38,7 @@ INVITE_EMAIL_PROVIDER = "manual_copy"
 [env.preview.vars]
 APP_NAME = "Altira Resilience"
 APP_STAGE = "preview"
-APP_BASE_URL = "https://altira-resilience-web.pages.dev"
+APP_BASE_URL = "https://resilience.ryanjameson.me"
 APP_ALLOWED_ORIGINS = "https://altira-resilience-web.pages.dev,https://resilience.ryanjameson.me"
 ALLOW_DEBUG_AUTH = "false"
 INVITE_EMAIL_PROVIDER = "manual_copy"
